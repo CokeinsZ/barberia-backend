@@ -1,0 +1,23 @@
+# Desarrollo local: se carga automáticamente con `docker compose up`.
+# Expone la API y PostgreSQL solo en 127.0.0.1 y activa logs detallados.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  migraciones:
+    environment:
+      DIAMANTE_ENTORNO: desarrollo
+
+  api:
+    environment:
+      DIAMANTE_ENTORNO: desarrollo
+      RUST_LOG: debug,sqlx=info,hyper=info
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  worker:
+    environment:
+      DIAMANTE_ENTORNO: desarrollo
+      RUST_LOG: debug,sqlx=info

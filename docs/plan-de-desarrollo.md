@@ -161,6 +161,7 @@ backend/
 │   │       ├── barberos/eventos.rs   # HorarioCambiado, AusenciaRegistrada, BarberoRetirado
 │   │       └── notificaciones/eventos.rs
 │   ├── plataforma/                   # infraestructura técnica compartida
+│   │   ├── migraciones/              # base compartida: extensiones y esquema `nucleo`
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── configuracion/        # carga y validación de variables de entorno
@@ -176,6 +177,9 @@ backend/
 │           ├── suscripciones.rs      # conecta eventos con sus manejadores
 │           ├── tareas.rs             # tareas programadas del worker
 │           └── pruebas_e2e.rs        # endpoints /_pruebas (feature "pruebas-e2e")
+├── scripts/
+│   ├── verificar-esquema.sh          # migraciones = esquema de diseño + 27 pruebas
+│   └── estructurar-modulo.sh         # crea las capas de un módulo como en `negocio`
 └── modulos/
     ├── identidad/
     ├── negocio/
@@ -621,6 +625,17 @@ La estimación supone **dos personas** y es preliminar: se recalibra con la velo
 | **9. Entrega 3 (Could)** | Comodidades | Mapa de calor, comparativo anual, exportaciones a Excel, pagos combinados, solicitudes de corrección, control de la PILA, segundo factor para administradores. | Según el valor observado en producción. | Según la priorización |
 
 **Total hasta el MVP: unas 17 semanas** (fases 0 a 7).
+
+### 8.1 Avance
+
+| Fase | Parte | Estado (20/11/2026) |
+|---|---|---|
+| 0 | **Base de datos** | ✅ Esquema completo dividido en migraciones por módulo (13 archivos + base compartida). `backend/scripts/verificar-esquema.sh` comprueba que son idénticas a `docs/diseno/esquema.sql` y que pasan las 27 pruebas de reglas de negocio. |
+| 0 | **Backend** | ✅ Workspace con `nucleo`, `contratos`, `plataforma` y `app`; 12 módulos con su esqueleto y sus migraciones; módulo de referencia `negocio` completo (dominio, casos de uso, PostgreSQL, HTTP y pruebas); binario `diamante api \| worker \| migrar \| salud`. |
+| 0 | **Infraestructura del backend** | ✅ Dockerfile (sin BuildKit, ADR 0004), Docker Compose base, de desarrollo y de E2E, rol `diamante_app` sin DDL, CI en `.github/workflows/ci.yml` (definido, aún sin ejecutar en GitHub). |
+| 0 | Frontend, Caddy y Playwright | ⏳ Pendiente. |
+
+Adelanto de la fase 1: el módulo `negocio` (RF-CFG-01 y RF-CFG-04) ya está construido como módulo de referencia. Le falta registrar la auditoría, que llega con el módulo `auditoria`.
 
 Orden de construcción dentro de cada módulo: dominio y sus pruebas unitarias → casos de uso con dobles de prueba → repositorio PostgreSQL con pruebas de integración → rutas HTTP y OpenAPI → pantalla en el frontend → escenario E2E.
 

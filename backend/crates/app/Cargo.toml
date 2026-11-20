@@ -1,0 +1,41 @@
+[package]
+name = "app"
+description = "Raíz de composición: el único crate que conoce a todos los módulos. Binario `diamante`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "diamante"
+path = "src/main.rs"
+
+[dependencies]
+agenda.workspace = true
+archivos.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+barberos.workspace = true
+catalogo.workspace = true
+clientes.workspace = true
+identidad.workspace = true
+negocio.workspace = true
+notificaciones.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+reportes.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+trabajos.workspace = true
+ventas.workspace = true
+verificacion.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+[package]
+name = "plataforma"
+description = "Infraestructura técnica compartida: configuración, base de datos, HTTP y telemetría. Sin reglas de negocio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Utilidades para pruebas de integración (base de datos efímera). No se usa en producción.
+pruebas = []
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+nucleo.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

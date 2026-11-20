@@ -1,0 +1,4 @@
+# El contexto de construcción es la raíz del monorepo; solo se envía lo necesario.
+*
+!backend/
+backend/target/

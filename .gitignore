@@ -1,0 +1,11 @@
+# Secretos locales
+.env
+
+# Compilación
+backend/target/
+
+# Frontend y pruebas E2E (fases siguientes)
+node_modules/
+frontend/dist/
+e2e/test-results/
+e2e/playwright-report/

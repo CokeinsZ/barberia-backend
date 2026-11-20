@@ -1,0 +1,25 @@
+# Ambiente de pruebas E2E: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up --wait
+# Base de datos en memoria (desechable y rápida). En fases siguientes se agregan el frontend,
+# Mailpit, la feature `pruebas-e2e` del backend y el reloj controlable.
+
+services:
+  db:
+    # Reemplaza (no fusiona) los volúmenes de la base: sin volumen persistente, datos en memoria.
+    volumes: !override
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /var/lib/postgresql
+
+  migraciones:
+    environment:
+      DIAMANTE_ENTORNO: pruebas
+
+  api:
+    environment:
+      DIAMANTE_ENTORNO: pruebas
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  worker:
+    environment:
+      DIAMANTE_ENTORNO: pruebas

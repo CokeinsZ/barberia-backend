@@ -1,0 +1,12 @@
+[package]
+name = "reportes"
+description = "Dashboard, reportes, liquidaciones, PDF y Excel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

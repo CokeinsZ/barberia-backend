@@ -1,0 +1,53 @@
+# Integración continua del backend y la base de datos (fase 0).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PRUEBAS_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain de rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Formato
+        run: cargo fmt --all --check
+      - name: Clippy sin advertencias
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Pruebas unitarias y de integración
+        run: cargo test --workspace --locked
+      - name: Cliente de PostgreSQL 18 (para pg_dump)
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+      - name: Migraciones = esquema de diseño + 27 pruebas de reglas de negocio
+        run: ./scripts/verificar-esquema.sh
+
+  imagen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen del backend
+        run: docker build -f infra/docker/backend.Dockerfile -t diamante-backend:ci .
