@@ -8,8 +8,9 @@ Datos de la barbería (nombre, NIT, contacto, comisión por defecto) y días esp
 | Esquema de base de datos | `negocio` (ver `migraciones/`) |
 | Requisitos | RF-CFG-01, RF-CFG-04 |
 | Endpoints | `GET/PUT /api/v1/negocio`, `GET/POST /api/v1/negocio/dias-especiales`, `DELETE /api/v1/negocio/dias-especiales/{id}` |
-| Fachada para otros módulos | `api::CalendarioNegocio` (la usará `agenda` para la disponibilidad) |
-| Pendiente | Auditoría de los cambios (cuando exista el módulo `auditoria`, fase 1) y precarga de festivos (RF-CFG-05) |
+| Fachada para otros módulos | `api::CalendarioNegocio<C>` (la usará `agenda` para la disponibilidad, dentro de su transacción) |
+| Depende de | `auditoria` (`Auditor<C>`): cada cambio se audita en la misma transacción |
+| Pendiente | Precarga de festivos (RF-CFG-05) |
 
 ## Estructura
 
@@ -32,7 +33,7 @@ negocio/
 │   │   ├── errores.rs                   # ErrorNegocio → categoría y código estable
 │   │   ├── politicas.rs                 # quién puede ejecutar cada caso de uso
 │   │   ├── dto.rs                       # datos de salida
-│   │   ├── puertos/                     # traits pequeños que la aplicación necesita
+│   │   ├── puertos/                     # traits genéricos en el contexto C y Puertos<C> (ADR 0005)
 │   │   ├── consultas/                   # un archivo por consulta
 │   │   ├── comandos/                    # un archivo por comando
 │   │   └── pruebas.rs                   # casos de uso con repositorios en memoria
@@ -57,6 +58,9 @@ negocio/
 6. **Seguro por defecto**: todos los manejadores piden `ActorAutenticado`; sin sesión, 401.
 7. **Tiempo inyectado**: «hoy» sale del `Reloj`, así las pruebas fijan la fecha.
 8. **Fachada mínima**: otros módulos solo ven `api.rs`; todo lo demás es `pub(crate)`.
+9. **Transacción explícita** (ADR 0005): cada comando abre el contexto con `Transacciones<C>`,
+   escribe y audita con el mismo `&mut cx`, y confirma al final; un error antes de confirmar
+   revierte todo. En las pruebas, `C = ()`.
 
 ## Cómo agregar un caso de uso
 

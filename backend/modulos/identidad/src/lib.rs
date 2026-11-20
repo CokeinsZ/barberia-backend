@@ -1,11 +1,26 @@
 //! # Módulo `identidad`
 //!
-//! Cuentas del personal, sesiones, invitaciones, recuperación de contraseña y administradores.
+//! Cuentas del personal (administradores y barberos), sesiones en el servidor, invitaciones,
+//! recuperación de contraseña y gestión de administradores. Los clientes no tienen cuenta.
 //!
-//! **Estado**: fase 0 — el esquema `identidad` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 1 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! - **Sesiones**: token aleatorio de 256 bits en la cookie `__Host-sesion`; en la base solo se
+//!   guarda su SHA-256. Vencen tras 12 horas sin uso, o 30 días con «Recordarme».
+//! - **Bloqueo**: 5 contraseñas fallidas bloquean la cuenta 15 minutos.
+//! - **Enlaces** de activación (7 días) y recuperación (1 hora): de un solo uso; solo el último
+//!   enlace emitido sirve.
+//!
+//! Los datos del barbero (nombre e identificador) son del módulo `barberos`, que implementa el
+//! puerto [`api::PerfilesBarberos`].
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod dominio;
+mod http;
+mod infraestructura;
+mod modulo;
 
-/// Migraciones del esquema `identidad`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub mod api;
+
+pub use modulo::{DependenciasIdentidad, ModuloIdentidad};
+
+/// Migraciones del esquema `identidad`.
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

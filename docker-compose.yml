@@ -1,5 +1,5 @@
-# Docker Compose base (producción). Fase 0: base de datos y backend.
-# El proxy (Caddy), el frontend, Gotenberg y los respaldos se agregan en sus fases.
+# Docker Compose base (producción). Fases 0 y 1: base de datos y backend (API, worker y
+# migraciones). El proxy (Caddy), el frontend, Gotenberg y los respaldos se agregan en sus fases.
 #
 # Desarrollo:  docker compose up            (carga también docker-compose.override.yml)
 # Producción:  docker compose -f docker-compose.yml up -d
@@ -12,6 +12,15 @@ x-backend: &backend
     dockerfile: infra/docker/backend.Dockerfile
   image: diamante-backend:${VERSION:-local}
   restart: unless-stopped
+
+# Variables de la aplicación que comparten la API y el worker. Las vacías se ignoran; en
+# producción, DIAMANTE_URL_PUBLICA es obligatoria y el proceso no arranca sin ella.
+x-entorno-app: &entorno-app
+  DATABASE_URL: postgres://diamante_app:${DIAMANTE_APP_PASSWORD}@db:5432/diamante
+  DIAMANTE_ENTORNO: ${DIAMANTE_ENTORNO:-produccion}
+  DIAMANTE_URL_PUBLICA: ${DIAMANTE_URL_PUBLICA:-}
+  DIAMANTE_ORIGENES: ${DIAMANTE_ORIGENES:-}
+  DIAMANTE_CONFIAR_PROXY: ${DIAMANTE_CONFIAR_PROXY:-false}
 
 services:
   db:
@@ -46,8 +55,7 @@ services:
     <<: *backend
     command: ["api"]
     environment:
-      DATABASE_URL: postgres://diamante_app:${DIAMANTE_APP_PASSWORD}@db:5432/diamante
-      DIAMANTE_ENTORNO: ${DIAMANTE_ENTORNO:-produccion}
+      <<: *entorno-app
     depends_on:
       migraciones: { condition: service_completed_successfully }
     healthcheck:
@@ -56,12 +64,18 @@ services:
       timeout: 5s
       retries: 5
 
+  # Envía los correos en cola (invitaciones y recuperación de contraseña).
   worker:
     <<: *backend
     command: ["worker"]
     environment:
-      DATABASE_URL: postgres://diamante_app:${DIAMANTE_APP_PASSWORD}@db:5432/diamante
-      DIAMANTE_ENTORNO: ${DIAMANTE_ENTORNO:-produccion}
+      <<: *entorno-app
+      DIAMANTE_SMTP_HOST: ${DIAMANTE_SMTP_HOST:-}
+      DIAMANTE_SMTP_PUERTO: ${DIAMANTE_SMTP_PUERTO:-}
+      DIAMANTE_SMTP_SEGURIDAD: ${DIAMANTE_SMTP_SEGURIDAD:-}
+      DIAMANTE_SMTP_USUARIO: ${DIAMANTE_SMTP_USUARIO:-}
+      DIAMANTE_SMTP_CLAVE: ${DIAMANTE_SMTP_CLAVE:-}
+      DIAMANTE_SMTP_REMITENTE: ${DIAMANTE_SMTP_REMITENTE:-}
     depends_on:
       migraciones: { condition: service_completed_successfully }
 

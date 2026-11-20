@@ -3,7 +3,7 @@
 
 PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario:$(POSTGRES_PASSWORD)@127.0.0.1:5432/postgres
 
-.PHONY: ayuda dev abajo logs migrar imagen backend-formato backend-lint backend-pruebas verificar-esquema
+.PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema
 
 ayuda: ## Muestra esta ayuda
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
@@ -19,6 +19,10 @@ logs: ## Sigue los logs de la API y el worker
 
 migrar: ## Aplica las migraciones pendientes
 	docker compose run --rm migraciones
+
+administrador: ## Invita a un administrador: make administrador CORREO=… NOMBRE="…"
+	@test -n "$(CORREO)" -a -n "$(NOMBRE)" || (echo 'Uso: make administrador CORREO=laura@diamante.co NOMBRE="Laura Gómez"' && exit 2)
+	docker compose run --rm api crear-administrador "$(CORREO)" "$(NOMBRE)"
 
 imagen: ## Construye la imagen del backend
 	docker compose build migraciones

@@ -1,11 +1,20 @@
 //! # Módulo `auditoria`
 //!
-//! Registro de solo inserción de las acciones sensibles.
+//! Registro de solo inserción de las acciones sensibles (RF-SIS-07, RNF-SEG). Los demás
+//! módulos escriben con [`api::Auditor`] **dentro de su propia transacción**, así la acción y
+//! su registro se confirman o se revierten juntos. El administrador lo consulta con
+//! `GET /api/v1/auditoria`.
 //!
-//! **Estado**: fase 0 — el esquema `auditoria` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 1 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! No tiene capa de dominio propia: no hay reglas de negocio, solo registro y consulta.
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod http;
+mod infraestructura;
+mod modulo;
 
-/// Migraciones del esquema `auditoria`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub mod api;
+
+pub use modulo::ModuloAuditoria;
+
+/// Migraciones del esquema `auditoria`.
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

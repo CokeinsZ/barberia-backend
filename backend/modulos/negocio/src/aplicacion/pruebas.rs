@@ -4,15 +4,16 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use auditoria::api::{Auditor, EntradaAuditoria};
 use chrono::NaiveDate;
 use nucleo::identificadores::{IdBarbero, IdDiaEspecial, IdUsuario};
-use nucleo::{Actor, ErrorPersistencia, RelojControlado};
+use nucleo::{Actor, ErrorPersistencia, RelojControlado, SinTransaccion};
 
 use super::CasosDeUso;
 use super::comandos::NuevoDiaEspecial;
 use super::errores::ErrorNegocio;
 use super::puertos::{
-    DiaEspecialGuardado, RESTRICCION_FECHA_UNICA, RepositorioDiasEspeciales, RepositorioNegocio,
+    DiaEspecialGuardado, Puertos, RESTRICCION_FECHA_UNICA, RepositorioDiasEspeciales, RepositorioNegocio,
 };
 use crate::dominio::entidades::{DatosNegocio, DiaEspecial, PropuestaDatosNegocio};
 
@@ -20,15 +21,15 @@ use crate::dominio::entidades::{DatosNegocio, DiaEspecial, PropuestaDatosNegocio
 struct NegocioEnMemoria(Mutex<Option<DatosNegocio>>);
 
 #[async_trait]
-impl RepositorioNegocio for NegocioEnMemoria {
-    async fn obtener(&self) -> Result<DatosNegocio, ErrorPersistencia> {
+impl RepositorioNegocio<()> for NegocioEnMemoria {
+    async fn obtener(&self, _: &mut ()) -> Result<DatosNegocio, ErrorPersistencia> {
         self.0
             .lock()
             .unwrap()
             .clone()
             .ok_or_else(|| ErrorPersistencia::Otro("sin datos".into()))
     }
-    async fn guardar(&self, datos: &DatosNegocio) -> Result<(), ErrorPersistencia> {
+    async fn guardar(&self, _: &mut (), datos: &DatosNegocio) -> Result<(), ErrorPersistencia> {
         *self.0.lock().unwrap() = Some(datos.clone());
         Ok(())
     }
@@ -41,9 +42,10 @@ struct DiasEnMemoria {
 }
 
 #[async_trait]
-impl RepositorioDiasEspeciales for DiasEnMemoria {
+impl RepositorioDiasEspeciales<()> for DiasEnMemoria {
     async fn listar(
         &self,
+        _: &mut (),
         desde: NaiveDate,
         hasta: NaiveDate,
     ) -> Result<Vec<DiaEspecialGuardado>, ErrorPersistencia> {
@@ -58,7 +60,7 @@ impl RepositorioDiasEspeciales for DiasEnMemoria {
         dias.sort_by_key(|g| g.dia.fecha());
         Ok(dias)
     }
-    async fn registrar(&self, dia: &DiaEspecial) -> Result<IdDiaEspecial, ErrorPersistencia> {
+    async fn registrar(&self, _: &mut (), dia: &DiaEspecial) -> Result<IdDiaEspecial, ErrorPersistencia> {
         let mut dias = self.dias.lock().unwrap();
         if dias.iter().any(|g| g.dia.fecha() == dia.fecha()) {
             return Err(ErrorPersistencia::Duplicado {
@@ -69,22 +71,45 @@ impl RepositorioDiasEspeciales for DiasEnMemoria {
         dias.push(DiaEspecialGuardado { id, dia: dia.clone() });
         Ok(id)
     }
-    async fn eliminar(&self, id: IdDiaEspecial) -> Result<bool, ErrorPersistencia> {
+    async fn eliminar(
+        &self,
+        _: &mut (),
+        id: IdDiaEspecial,
+    ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia> {
         let mut dias = self.dias.lock().unwrap();
-        let antes = dias.len();
-        dias.retain(|g| g.id != id);
-        Ok(dias.len() < antes)
+        let posicion = dias.iter().position(|g| g.id == id);
+        Ok(posicion.map(|i| dias.remove(i)))
+    }
+}
+
+/// Acciones auditadas, en orden.
+#[derive(Debug, Default)]
+struct AuditoriaEnMemoria(Mutex<Vec<&'static str>>);
+
+#[async_trait]
+impl Auditor<()> for AuditoriaEnMemoria {
+    async fn registrar(&self, _: &mut (), entrada: EntradaAuditoria) -> Result<(), ErrorPersistencia> {
+        self.0.lock().unwrap().push(entrada.accion);
+        Ok(())
     }
 }
 
 /// Miércoles 18 de noviembre de 2026, 2:50 p. m. en Bogotá.
-fn casos() -> CasosDeUso {
+fn casos() -> CasosDeUso<()> {
+    casos_con_auditoria().0
+}
+
+fn casos_con_auditoria() -> (CasosDeUso<()>, Arc<AuditoriaEnMemoria>) {
     let reloj = Arc::new(RelojControlado::en("2026-11-18T19:50:00Z".parse().unwrap()));
-    CasosDeUso::nuevos(
-        Arc::new(NegocioEnMemoria::default()),
-        Arc::new(DiasEnMemoria::default()),
+    let auditoria = Arc::new(AuditoriaEnMemoria::default());
+    let casos = CasosDeUso::nuevos(Puertos {
+        transacciones: Arc::new(SinTransaccion),
+        negocio: Arc::new(NegocioEnMemoria::default()),
+        dias: Arc::new(DiasEnMemoria::default()),
+        auditor: auditoria.clone(),
         reloj,
-    )
+    });
+    (casos, auditoria)
 }
 
 fn admin() -> Actor {
@@ -131,7 +156,7 @@ fn campos(error: ErrorNegocio) -> Vec<String> {
 
 #[tokio::test]
 async fn el_administrador_actualiza_y_consulta_los_datos() {
-    let casos = casos();
+    let (casos, auditoria) = casos_con_auditoria();
     let dto = casos
         .actualizar_datos
         .ejecutar(&admin(), propuesta())
@@ -139,6 +164,7 @@ async fn el_administrador_actualiza_y_consulta_los_datos() {
         .unwrap();
     assert_eq!(dto.whatsapp.as_deref(), Some("3005550000"));
     assert_eq!(casos.obtener_datos.ejecutar(&admin()).await.unwrap(), dto);
+    assert_eq!(*auditoria.0.lock().unwrap(), ["actualizar_datos"]);
 }
 
 #[tokio::test]
@@ -172,7 +198,7 @@ async fn los_datos_invalidos_no_se_guardan() {
 
 #[tokio::test]
 async fn registra_lista_y_elimina_dias_especiales() {
-    let casos = casos();
+    let (casos, auditoria) = casos_con_auditoria();
     let creado = casos
         .registrar_dia
         .ejecutar(&admin(), nochebuena())
@@ -188,6 +214,10 @@ async fn registra_lista_y_elimina_dias_especiales() {
         casos.eliminar_dia.ejecutar(&admin(), creado.id).await,
         Err(ErrorNegocio::DiaEspecialNoEncontrado)
     ));
+    assert_eq!(
+        *auditoria.0.lock().unwrap(),
+        ["registrar_dia_especial", "eliminar_dia_especial"]
+    );
 }
 
 #[tokio::test]

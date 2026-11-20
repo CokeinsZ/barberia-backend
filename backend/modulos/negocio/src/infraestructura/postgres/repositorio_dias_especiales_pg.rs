@@ -2,22 +2,13 @@ use async_trait::async_trait;
 use chrono::{NaiveDate, NaiveTime};
 use nucleo::ErrorPersistencia;
 use nucleo::identificadores::IdDiaEspecial;
-use plataforma::base_datos::a_error_persistencia;
-use sqlx::PgPool;
+use plataforma::base_datos::{UnidadDeTrabajo, a_error_persistencia};
 
 use crate::aplicacion::puertos::{DiaEspecialGuardado, RepositorioDiasEspeciales};
 use crate::dominio::entidades::{DiaEspecial, OrigenDiaEspecial, TipoDiaEspecial};
 
-#[derive(Debug)]
-pub(crate) struct RepositorioDiasEspecialesPg {
-    pool: PgPool,
-}
-
-impl RepositorioDiasEspecialesPg {
-    pub(crate) fn nuevo(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RepositorioDiasEspecialesPg;
 
 #[derive(sqlx::FromRow)]
 struct FilaDiaEspecial {
@@ -47,9 +38,10 @@ impl TryFrom<FilaDiaEspecial> for DiaEspecialGuardado {
 }
 
 #[async_trait]
-impl RepositorioDiasEspeciales for RepositorioDiasEspecialesPg {
+impl RepositorioDiasEspeciales<UnidadDeTrabajo> for RepositorioDiasEspecialesPg {
     async fn listar(
         &self,
+        uow: &mut UnidadDeTrabajo,
         desde: NaiveDate,
         hasta: NaiveDate,
     ) -> Result<Vec<DiaEspecialGuardado>, ErrorPersistencia> {
@@ -61,13 +53,17 @@ impl RepositorioDiasEspeciales for RepositorioDiasEspecialesPg {
         )
         .bind(desde)
         .bind(hasta)
-        .fetch_all(&self.pool)
+        .fetch_all(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;
         filas.into_iter().map(DiaEspecialGuardado::try_from).collect()
     }
 
-    async fn registrar(&self, dia: &DiaEspecial) -> Result<IdDiaEspecial, ErrorPersistencia> {
+    async fn registrar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        dia: &DiaEspecial,
+    ) -> Result<IdDiaEspecial, ErrorPersistencia> {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO negocio.dia_especial (fecha, nombre, tipo, hora_cierre, origen)
              VALUES ($1, $2, $3::negocio.tipo_dia_especial, $4, $5::negocio.origen_dia_especial)
@@ -78,18 +74,25 @@ impl RepositorioDiasEspeciales for RepositorioDiasEspecialesPg {
         .bind(dia.tipo().codigo())
         .bind(dia.tipo().hora_cierre())
         .bind(dia.origen().codigo())
-        .fetch_one(&self.pool)
+        .fetch_one(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;
         Ok(IdDiaEspecial(id))
     }
 
-    async fn eliminar(&self, id: IdDiaEspecial) -> Result<bool, ErrorPersistencia> {
-        let resultado = sqlx::query("DELETE FROM negocio.dia_especial WHERE id = $1")
-            .bind(id.0)
-            .execute(&self.pool)
-            .await
-            .map_err(a_error_persistencia)?;
-        Ok(resultado.rows_affected() > 0)
+    async fn eliminar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: IdDiaEspecial,
+    ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia> {
+        let fila: Option<FilaDiaEspecial> = sqlx::query_as(
+            "DELETE FROM negocio.dia_especial WHERE id = $1
+             RETURNING id, fecha, nombre, tipo::text AS tipo, hora_cierre, origen::text AS origen",
+        )
+        .bind(id.0)
+        .fetch_optional(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        fila.map(DiaEspecialGuardado::try_from).transpose()
     }
 }

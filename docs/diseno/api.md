@@ -59,10 +59,10 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | Estado | `codigo` | Cuándo |
 |---|---|---|
 | 400 | `solicitud_invalida` | JSON mal formado o parámetros imposibles de interpretar. |
-| 401 | `no_autenticado` | Falta la sesión, o la sesión está vencida o revocada. |
-| 403 | `prohibido` / `origen_invalido` | La política no lo permite / la verificación CSRF falló. |
+| 401 | `no_autenticado`, `credenciales_invalidas` | Falta la sesión, o la sesión está vencida o revocada / correo o contraseña incorrectos. |
+| 403 | `prohibido` / `origen_invalido` / `acceso_suspendido` | La política no lo permite / la verificación CSRF falló / la cuenta no tiene acceso al panel. |
 | 404 | `no_encontrado` | El recurso no existe o no es del barbero. |
-| 409 | `conflicto_horario`, `cita_ya_cobrada`, `estado_invalido`, `duplicado` | Reglas de concurrencia o de estado. |
+| 409 | `conflicto_horario`, `cita_ya_cobrada`, `estado_invalido`, `duplicado`, `correo_en_uso`, `ultimo_administrador`, `no_puede_desactivarse` | Reglas de concurrencia o de estado. |
 | 410 | `enlace_vencido`, `codigo_vencido` | Token o código vencido. |
 | 422 | `validacion` | Reglas de negocio o de formato; `errores` trae `[{ "campo": "celular", "mensaje": "…" }]`. |
 | 429 | `demasiados_intentos` | Límite de intentos; incluye el encabezado `Retry-After`. |
@@ -75,7 +75,7 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | `POST /publico/verificaciones` | 3 por celular cada 15 min y 10 por IP por hora |
 | `POST /publico/verificaciones/{id}/confirmar` | 5 intentos por código (luego se invalida) |
 | `POST /auth/sesion` | 10 por IP cada 15 min; la cuenta se bloquea 15 min tras 5 fallos |
-| `POST /auth/recuperacion` | 3 por correo por hora (siempre responde 202) |
+| `POST /auth/recuperacion` | 3 por correo y 10 por IP por hora (siempre responde 202) |
 | Resto de `/publico` | 120 por minuto |
 | Panel | 600 por minuto por sesión |
 
@@ -112,16 +112,16 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 
 | Método | Ruta | Perfil | Descripción | Requisitos |
 |---|---|---|---|---|
-| POST | `/auth/sesion` | Público | `{ correo, contrasena, recordarme }` → cookie de sesión y `{ usuario: { id, rol, nombre }, panel: "/admin" }`. | RF-AUT-01, RF-AUT-04 |
+| POST | `/auth/sesion` | Público | `{ correo, contrasena, recordarme }` → cookie de sesión y `{ usuario: { id, rol, nombre, correo }, panel: "/admin" }`. `401 credenciales_invalidas` (genérico, también con la cuenta bloqueada) o `403 acceso_suspendido` (cuenta desactivada o barbero suspendido o retirado). | RF-AUT-01, RF-AUT-04 |
 | GET | `/auth/sesion` | Personal | Usuario de la sesión actual. | RF-AUT-01 |
 | DELETE | `/auth/sesion` | Personal | Cierra la sesión. | RF-AUT-07 |
-| POST | `/auth/activacion` | Público | `{ token, contrasena }`: activa la cuenta desde la invitación. | RF-AUT-02 |
+| POST | `/auth/activacion` | Público | `{ token, contrasena }`: activa la cuenta desde la invitación. El enlace del correo es `/acceso/activar#token=…` (el token va en el fragmento para que no llegue a los logs). | RF-AUT-02 |
 | POST | `/auth/recuperacion` | Público | `{ correo }` → `202` siempre, exista o no la cuenta. | RF-AUT-03 |
 | POST | `/auth/recuperacion/confirmar` | Público | `{ token, contrasena }`. | RF-AUT-03 |
 | PUT | `/auth/contrasena` | Personal | `{ actual, nueva }`; cierra las demás sesiones. | Propuesto |
 | GET | `/administradores` | Admin | Lista de administradores. | RF-CFG-06 |
-| POST | `/administradores` | Admin | `{ correo, nombre }` → invitación por correo. | RF-CFG-06 |
-| PATCH | `/administradores/{id}` | Admin | `{ activo }`. No permite desactivar al último administrador activo. | RF-CFG-06 |
+| POST | `/administradores` | Admin | `{ correo, nombre }` → `201 { id }` e invitación por correo; `409 correo_en_uso`. | RF-CFG-06 |
+| PATCH | `/administradores/{id}` | Admin | `{ activo }`. No permite desactivar al último administrador activo (`409 ultimo_administrador`) ni a uno mismo (`409 no_puede_desactivarse`). Desactivar cierra sus sesiones. | RF-CFG-06 |
 
 ### 2.4 Negocio (módulo `negocio`)
 

@@ -1,11 +1,20 @@
 //! # Módulo `notificaciones`
 //!
-//! Cola de salida de mensajes, WhatsApp Cloud API, correo SMTP, webhooks y avisos internos.
+//! Cola de salida de mensajes (patrón *outbox*): los demás módulos encolan con
+//! [`api::BuzonSalida`] **dentro de su transacción** y el worker los envía después. Así un
+//! correo nunca se envía por una operación que se revirtió, ni se pierde si el proveedor falla.
 //!
-//! **Estado**: fase 0 — el esquema `notificaciones` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 4 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! Fase 1: correo por SMTP (invitaciones y recuperación de contraseña). Fase 4: WhatsApp,
+//! webhooks y avisos internos.
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod dominio;
+mod infraestructura;
+mod modulo;
 
-/// Migraciones del esquema `notificaciones`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub mod api;
+
+pub use modulo::ModuloNotificaciones;
+
+/// Migraciones del esquema `notificaciones`.
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

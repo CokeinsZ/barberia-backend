@@ -12,17 +12,17 @@ use super::solicitudes::{ActualizarDatosSolicitud, NuevoDiaSolicitud, RangoSolic
 use crate::aplicacion::CasosDeUso;
 use crate::aplicacion::dto::{DatosNegocioDto, DiaEspecialDto};
 
-type Casos = State<Arc<CasosDeUso>>;
+type Casos<C> = State<Arc<CasosDeUso<C>>>;
 
-pub(crate) async fn obtener_datos(
-    State(casos): Casos,
+pub(crate) async fn obtener_datos<C: Send + 'static>(
+    State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
 ) -> Result<Json<DatosNegocioDto>, ErrorHttp> {
     Ok(Json(casos.obtener_datos.ejecutar(&actor).await?))
 }
 
-pub(crate) async fn actualizar_datos(
-    State(casos): Casos,
+pub(crate) async fn actualizar_datos<C: Send + 'static>(
+    State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
     Entrada(solicitud): Entrada<ActualizarDatosSolicitud>,
 ) -> Result<Json<DatosNegocioDto>, ErrorHttp> {
@@ -31,8 +31,8 @@ pub(crate) async fn actualizar_datos(
     ))
 }
 
-pub(crate) async fn listar_dias(
-    State(casos): Casos,
+pub(crate) async fn listar_dias<C: Send + 'static>(
+    State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
     Parametros(rango): Parametros<RangoSolicitud>,
 ) -> Result<Json<Vec<DiaEspecialDto>>, ErrorHttp> {
@@ -44,8 +44,8 @@ pub(crate) async fn listar_dias(
     ))
 }
 
-pub(crate) async fn registrar_dia(
-    State(casos): Casos,
+pub(crate) async fn registrar_dia<C: Send + 'static>(
+    State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
     Entrada(solicitud): Entrada<NuevoDiaSolicitud>,
 ) -> Result<Creado<DiaEspecialDto>, ErrorHttp> {
@@ -56,8 +56,8 @@ pub(crate) async fn registrar_dia(
     })
 }
 
-pub(crate) async fn eliminar_dia(
-    State(casos): Casos,
+pub(crate) async fn eliminar_dia<C: Send + 'static>(
+    State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
     id: Result<Path<i64>, PathRejection>,
 ) -> Result<StatusCode, ErrorHttp> {

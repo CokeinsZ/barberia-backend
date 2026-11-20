@@ -5,11 +5,11 @@ agendamiento en línea, panel del administrador y panel del barbero.
 
 | Parte | Tecnología | Carpeta | Estado |
 |---|---|---|---|
-| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fase 0 lista: fundaciones + módulo de referencia `negocio` |
+| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 y 1 listas: fundaciones, `identidad`, `negocio`, `auditoria` y correo de `notificaciones` |
 | Base de datos | PostgreSQL 18, un esquema por módulo | `backend/**/migraciones/` | Esquema completo (45 tablas) en migraciones por módulo |
 | Frontend | Astro + React | `frontend/` | Pendiente (fase 0, parte de frontend) |
 | Pruebas E2E | Playwright | `e2e/` | Pendiente |
-| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API y worker |
+| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API, worker y Mailpit (desarrollo y E2E) |
 
 ## Documentación
 
@@ -23,9 +23,14 @@ agendamiento en línea, panel del administrador y panel del barbero.
 
 ```bash
 cp .env.example .env        # y cambie las contraseñas
-make dev                    # base de datos + migraciones + API + worker
+make dev                    # base de datos + migraciones + API + worker + Mailpit
 curl localhost:8080/api/salud/lista
+make administrador CORREO=laura@diamante.co NOMBRE="Laura Gómez"   # primer administrador
 ```
+
+La invitación muestra el enlace de activación en la terminal y llega también a Mailpit
+(<http://localhost:8025>). El enlace apunta al frontend (`/acceso/activar#token=…`); mientras
+el frontend no exista, la cuenta se activa con `POST /api/v1/auth/activacion`.
 
 `make ayuda` lista todos los atajos (`backend-lint`, `backend-pruebas`, `verificar-esquema`…).
 
@@ -37,7 +42,7 @@ backend/
 │   ├── nucleo/         # tipos de dominio compartidos (dinero, celular, reloj, eventos)
 │   ├── contratos/      # eventos entre módulos
 │   ├── plataforma/     # configuración, PostgreSQL, HTTP, telemetría; migración base
-│   └── app/            # raíz de composición y binario `diamante` (api | worker | migrar | salud)
+│   └── app/            # raíz de composición y binario `diamante` (api | worker | migrar | salud | crear-administrador)
 ├── modulos/            # 13 módulos, cada uno con su esquema, sus capas y sus pruebas
 └── scripts/            # verificar-esquema.sh, estructurar-modulo.sh
 ```

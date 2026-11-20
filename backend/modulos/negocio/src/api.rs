@@ -7,12 +7,14 @@ pub use crate::aplicacion::dto::{DatosNegocioDto, DiaEspecialDto, TipoDiaEspecia
 pub use crate::aplicacion::errores::ErrorNegocio;
 
 /// Calendario del negocio. El módulo `agenda` lo usa para no ofrecer horas en días cerrados
-/// y para aplicar el horario de festivo (RN-03).
+/// y para aplicar el horario de festivo (RN-03). Lee dentro del contexto transaccional `C` de
+/// quien llama.
 #[async_trait]
-pub trait CalendarioNegocio: Send + Sync + std::fmt::Debug {
+pub trait CalendarioNegocio<C: Send>: Send + Sync + std::fmt::Debug {
     /// Días especiales entre dos fechas (incluidas), ordenados por fecha.
     async fn dias_especiales(
         &self,
+        cx: &mut C,
         desde: NaiveDate,
         hasta: NaiveDate,
     ) -> Result<Vec<DiaEspecialDto>, ErrorNegocio>;

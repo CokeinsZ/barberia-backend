@@ -44,6 +44,11 @@ pub trait ErrorDeAplicacion: std::error::Error + Send + Sync + 'static {
     fn errores_de_campo(&self) -> Vec<ErrorDeCampo> {
         Vec::new()
     }
+
+    /// Segundos que el cliente debe esperar antes de reintentar (encabezado `Retry-After`).
+    fn reintentar_en_segundos(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Valor inválido al construir un objeto de valor.

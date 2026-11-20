@@ -35,6 +35,7 @@ verificacion.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
+plataforma = { workspace = true, features = ["pruebas"] }
 tower.workspace = true
 
 [lints]

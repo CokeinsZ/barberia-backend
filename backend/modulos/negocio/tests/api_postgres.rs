@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use auditoria::ModuloAuditoria;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
@@ -21,6 +22,9 @@ use plataforma::base_datos::{MIGRACIONES_BASE, OrigenMigraciones};
 use plataforma::http::{ErrorHttp, Sesiones, ValidadorSesion};
 use serde_json::{Value, json};
 use tower::ServiceExt;
+
+/// `auditoria.registro` referencia a `identidad.usuario`.
+static MIGRACIONES_IDENTIDAD: sqlx::migrate::Migrator = sqlx::migrate!("../identidad/migraciones");
 
 /// Sesiones de prueba: el token dice quién es.
 #[derive(Debug)]
@@ -56,13 +60,30 @@ impl Escenario {
                 migraciones: &MIGRACIONES_BASE,
             },
             OrigenMigraciones {
+                modulo: "identidad",
+                migraciones: &MIGRACIONES_IDENTIDAD,
+            },
+            OrigenMigraciones {
                 modulo: "negocio",
                 migraciones: &negocio::MIGRACIONES,
             },
+            OrigenMigraciones {
+                modulo: "auditoria",
+                migraciones: &auditoria::MIGRACIONES,
+            },
         ])
         .await;
+        // Las cuentas de las sesiones de prueba, para la llave foránea de la auditoría.
+        sqlx::query(
+            "INSERT INTO identidad.usuario (correo, rol) VALUES ('laura@diamante.co', 'administrador'),
+                                                                ('santiago@diamante.co', 'barbero')",
+        )
+        .execute(&base.pool)
+        .await
+        .unwrap();
         let reloj = Arc::new(RelojControlado::en("2026-11-18T19:50:00Z".parse().unwrap()));
-        let modulo = ModuloNegocio::con_postgres(base.pool.clone(), reloj);
+        let auditor = ModuloAuditoria::con_postgres(base.pool.clone(), reloj.clone()).auditor();
+        let modulo = ModuloNegocio::con_postgres(base.pool.clone(), reloj, auditor);
         let enrutador = Router::new()
             .nest("/api/v1", modulo.rutas())
             .layer(Extension(Sesiones(Arc::new(SesionesDePrueba))));
@@ -146,6 +167,17 @@ async fn el_administrador_lee_y_actualiza_los_datos_del_negocio() {
     assert_eq!(r.json["whatsapp"], "3005550000");
     assert_eq!(r.json["instagram"], "diamante.barberia");
     assert_eq!(r.json["porcentaje_comision_defecto"], 45.5);
+
+    // El cambio queda auditado en la misma transacción, con el antes y el después.
+    let (usuario, actor, antes, despues): (Option<i64>, String, Value, Value) = sqlx::query_as(
+        "SELECT usuario_id, actor::text, antes, despues FROM auditoria.registro WHERE accion = 'actualizar_datos'",
+    )
+    .fetch_one(&e.base.pool)
+    .await
+    .unwrap();
+    assert_eq!((usuario, actor.as_str()), (Some(1), "administrador"));
+    assert_eq!(antes["porcentaje_comision_defecto"], 50.0);
+    assert_eq!(despues["porcentaje_comision_defecto"], 45.5);
     e.base.eliminar().await;
 }
 
@@ -256,6 +288,11 @@ async fn ciclo_completo_de_un_dia_especial() {
         e.pedir(Method::DELETE, &ruta, Some("admin"), None).await.estado,
         StatusCode::NOT_FOUND
     );
+    let acciones: Vec<String> = sqlx::query_scalar("SELECT accion FROM auditoria.registro ORDER BY id")
+        .fetch_all(&e.base.pool)
+        .await
+        .unwrap();
+    assert_eq!(acciones, ["registrar_dia_especial", "eliminar_dia_especial"]);
     e.base.eliminar().await;
 }
 

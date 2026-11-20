@@ -46,12 +46,42 @@ pub struct ConfiguracionBaseDatos {
     pub max_conexiones: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeguridadSmtp {
+    /// Sin cifrado (solo para Mailpit en desarrollo).
+    Ninguna,
+    /// STARTTLS, normalmente en el puerto 587.
+    StartTls,
+    /// TLS implícito, normalmente en el puerto 465.
+    Tls,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfiguracionSmtp {
+    pub host: String,
+    pub puerto: u16,
+    pub seguridad: SeguridadSmtp,
+    pub usuario: Option<String>,
+    pub clave: Option<Secreto>,
+    /// Remitente, p. ej. `Diamante Barbería <no-responder@diamante.co>`.
+    pub remitente: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Configuracion {
     pub entorno: Entorno,
     pub direccion_http: SocketAddr,
     pub base_datos: ConfiguracionBaseDatos,
     pub formato_logs: FormatoLogs,
+    /// URL pública del sitio, sin barra final. Se usa en los enlaces de los correos.
+    pub url_publica: String,
+    /// Orígenes aceptados en peticiones que modifican datos (verificación de `Origin`).
+    pub origenes_permitidos: Vec<String>,
+    /// Si la API está detrás de un proxy de confianza (Caddy), la IP del cliente se toma de
+    /// `X-Forwarded-For`.
+    pub confiar_proxy: bool,
+    /// Envío de correos. Sin configuración, los correos quedan en cola sin enviarse.
+    pub smtp: Option<ConfiguracionSmtp>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -121,6 +151,83 @@ impl Configuracion {
             }
         };
 
+        let url_publica = match leer("DIAMANTE_URL_PUBLICA") {
+            Some(url) => url.trim_end_matches('/').to_owned(),
+            None if entorno == Entorno::Produccion => {
+                faltantes.push("DIAMANTE_URL_PUBLICA");
+                String::new()
+            }
+            None => "http://localhost:8080".to_owned(),
+        };
+        if !url_publica.is_empty()
+            && !(url_publica.starts_with("http://") || url_publica.starts_with("https://"))
+        {
+            invalidas.push(format!(
+                "DIAMANTE_URL_PUBLICA={url_publica} (debe empezar por http:// o https://)"
+            ));
+        }
+        let mut origenes_permitidos = vec![origen_de(&url_publica)];
+        if let Some(extra) = leer("DIAMANTE_ORIGENES") {
+            origenes_permitidos.extend(
+                extra
+                    .split(',')
+                    .map(|o| o.trim().trim_end_matches('/').to_owned())
+                    .filter(|o| !o.is_empty()),
+            );
+        }
+
+        let confiar_proxy = match leer("DIAMANTE_CONFIAR_PROXY").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(otro) => {
+                invalidas.push(format!("DIAMANTE_CONFIAR_PROXY={otro} (use true o false)"));
+                false
+            }
+        };
+
+        let smtp = leer("DIAMANTE_SMTP_HOST").map(|host| {
+            let seguridad = match leer("DIAMANTE_SMTP_SEGURIDAD").as_deref() {
+                None | Some("starttls") => SeguridadSmtp::StartTls,
+                Some("tls") => SeguridadSmtp::Tls,
+                Some("ninguna") => SeguridadSmtp::Ninguna,
+                Some(otro) => {
+                    invalidas.push(format!(
+                        "DIAMANTE_SMTP_SEGURIDAD={otro} (use starttls, tls o ninguna)"
+                    ));
+                    SeguridadSmtp::StartTls
+                }
+            };
+            let puerto_defecto = match seguridad {
+                SeguridadSmtp::Ninguna => 25,
+                SeguridadSmtp::StartTls => 587,
+                SeguridadSmtp::Tls => 465,
+            };
+            let puerto = match leer("DIAMANTE_SMTP_PUERTO") {
+                None => puerto_defecto,
+                Some(texto) => texto.parse().unwrap_or_else(|_| {
+                    invalidas.push(format!("DIAMANTE_SMTP_PUERTO={texto}"));
+                    puerto_defecto
+                }),
+            };
+            let remitente = leer("DIAMANTE_SMTP_REMITENTE").unwrap_or_else(|| {
+                faltantes.push("DIAMANTE_SMTP_REMITENTE");
+                String::new()
+            });
+            let usuario = leer("DIAMANTE_SMTP_USUARIO");
+            let clave = leer("DIAMANTE_SMTP_CLAVE").map(Secreto::nuevo);
+            if usuario.is_some() != clave.is_some() {
+                invalidas.push("DIAMANTE_SMTP_USUARIO y DIAMANTE_SMTP_CLAVE van juntos".to_owned());
+            }
+            ConfiguracionSmtp {
+                host,
+                puerto,
+                seguridad,
+                usuario,
+                clave,
+                remitente,
+            }
+        });
+
         if !faltantes.is_empty() || !invalidas.is_empty() {
             return Err(ErrorConfiguracion { faltantes, invalidas });
         }
@@ -133,7 +240,19 @@ impl Configuracion {
                 max_conexiones,
             },
             formato_logs,
+            url_publica,
+            origenes_permitidos,
+            confiar_proxy,
+            smtp,
         })
+    }
+}
+
+/// `https://diamante.co/ruta` → `https://diamante.co` (esquema, host y puerto).
+fn origen_de(url: &str) -> String {
+    match url.split_once("://") {
+        Some((esquema, resto)) => format!("{esquema}://{}", resto.split('/').next().unwrap_or_default()),
+        None => url.to_owned(),
     }
 }
 
@@ -169,9 +288,56 @@ mod pruebas {
         let c = Configuracion::desde(fuente(&[
             ("DATABASE_URL", "x"),
             ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co/"),
         ]))
         .unwrap();
         assert_eq!(c.formato_logs, FormatoLogs::Json);
+        assert_eq!(c.url_publica, "https://diamante.co");
+    }
+
+    #[test]
+    fn produccion_exige_la_url_publica() {
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.faltantes, ["DIAMANTE_URL_PUBLICA"]);
+    }
+
+    #[test]
+    fn deriva_los_origenes_permitidos() {
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co/sitio"),
+            ("DIAMANTE_ORIGENES", " http://localhost:4321/ ,"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.origenes_permitidos,
+            ["https://diamante.co", "http://localhost:4321"]
+        );
+    }
+
+    #[test]
+    fn configura_smtp_solo_si_hay_host() {
+        let sin = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        assert!(sin.smtp.is_none());
+        let con = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_SMTP_HOST", "mailpit"),
+            ("DIAMANTE_SMTP_SEGURIDAD", "ninguna"),
+            ("DIAMANTE_SMTP_REMITENTE", "Diamante <no-responder@diamante.co>"),
+        ]))
+        .unwrap();
+        let smtp = con.smtp.unwrap();
+        assert_eq!((smtp.puerto, smtp.seguridad), (25, SeguridadSmtp::Ninguna));
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_SMTP_HOST", "smtp.x.co"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.faltantes, ["DIAMANTE_SMTP_REMITENTE"]);
     }
 
     #[test]

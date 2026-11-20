@@ -1,5 +1,6 @@
 # Desarrollo local: se carga automáticamente con `docker compose up`.
-# Expone la API y PostgreSQL solo en 127.0.0.1 y activa logs detallados.
+# Expone la API, PostgreSQL y Mailpit solo en 127.0.0.1 y activa logs detallados.
+# Los correos no salen a internet: Mailpit los atrapa y los muestra en http://localhost:8025.
 
 services:
   db:
@@ -13,6 +14,9 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: desarrollo
+      # Servidor de desarrollo de Astro: destino de los enlaces de los correos y origen permitido.
+      DIAMANTE_URL_PUBLICA: http://localhost:4321
+      DIAMANTE_ORIGENES: http://localhost:8080
       RUST_LOG: debug,sqlx=info,hyper=info
     ports:
       - "127.0.0.1:8080:8080"
@@ -20,4 +24,17 @@ services:
   worker:
     environment:
       DIAMANTE_ENTORNO: desarrollo
+      DIAMANTE_URL_PUBLICA: http://localhost:4321
+      DIAMANTE_SMTP_HOST: mailpit
+      DIAMANTE_SMTP_PUERTO: "1025"
+      DIAMANTE_SMTP_SEGURIDAD: ninguna
+      DIAMANTE_SMTP_REMITENTE: Diamante Barbería <no-responder@diamante.local>
       RUST_LOG: debug,sqlx=info
+    depends_on:
+      mailpit: { condition: service_started }
+
+  mailpit:
+    image: axllent/mailpit:v1.27.0
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped

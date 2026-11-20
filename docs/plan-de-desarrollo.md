@@ -634,8 +634,9 @@ La estimación supone **dos personas** y es preliminar: se recalibra con la velo
 | 0 | **Backend** | ✅ Workspace con `nucleo`, `contratos`, `plataforma` y `app`; 12 módulos con su esqueleto y sus migraciones; módulo de referencia `negocio` completo (dominio, casos de uso, PostgreSQL, HTTP y pruebas); binario `diamante api \| worker \| migrar \| salud`. |
 | 0 | **Infraestructura del backend** | ✅ Dockerfile (sin BuildKit, ADR 0004), Docker Compose base, de desarrollo y de E2E, rol `diamante_app` sin DDL, CI en `.github/workflows/ci.yml` (definido, aún sin ejecutar en GitHub). |
 | 0 | Frontend, Caddy y Playwright | ⏳ Pendiente. |
-
-Adelanto de la fase 1: el módulo `negocio` (RF-CFG-01 y RF-CFG-04) ya está construido como módulo de referencia. Le falta registrar la auditoría, que llega con el módulo `auditoria`.
+| 1 | **Backend** | ✅ `identidad` completo (sesión con cookie, bloqueo por intentos, invitación, recuperación, cambio de contraseña, administradores, límites de intentos y validación de sesión en cada petición); `auditoria` (registro dentro de la transacción de cada módulo y `GET /auditoria`); `negocio` ahora audita sus cambios; correo de `notificaciones` adelantado de la fase 4 (cola *outbox*, SMTP con reintentos, Mailpit); adaptador de `barberos` para saber si un barbero puede entrar. `app`: sesiones reales, verificación de `Origin`, IP del cliente, `diamante crear-administrador` y worker que envía correos. Patrón de contexto transaccional en ADR 0005. 101 pruebas (unitarias, de integración con PostgreSQL y de cableado completo). |
+| 1 | Módulo `archivos` | ⏳ Pasa a la fase 2, donde lo necesitan la foto y los documentos del barbero. |
+| 1 | Frontend (acceso, cascarón del panel, configuración básica) y E2E-AUT-01 a 05 | ⏳ Pendiente (depende del frontend de la fase 0). |
 
 Orden de construcción dentro de cada módulo: dominio y sus pruebas unitarias → casos de uso con dobles de prueba → repositorio PostgreSQL con pruebas de integración → rutas HTTP y OpenAPI → pantalla en el frontend → escenario E2E.
 

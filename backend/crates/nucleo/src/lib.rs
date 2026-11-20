@@ -10,12 +10,16 @@ pub mod actor;
 pub mod errores;
 pub mod eventos;
 pub mod identificadores;
+pub mod paginacion;
 pub mod reloj;
+pub mod transacciones;
 pub mod valores;
 
 pub use actor::{Actor, TipoActor};
 pub use errores::{Categoria, ErrorDeAplicacion, ErrorDeCampo, ErrorPersistencia, ErrorValor};
+pub use paginacion::{Pagina, SolicitudPagina};
 pub use reloj::{Reloj, RelojControlado, RelojSistema, ZONA_HORARIA};
+pub use transacciones::{SinTransaccion, Transacciones};
 pub use valores::{Celular, Correo, Dinero, Porcentaje};
 
 // Permite que la macro `identificador!` use la ruta `::nucleo::…` también dentro de este crate.

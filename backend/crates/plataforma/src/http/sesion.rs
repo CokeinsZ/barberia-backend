@@ -68,7 +68,7 @@ impl<S: Send + Sync> FromRequestParts<S> for ActorAutenticado {
     }
 }
 
-fn leer_cookie(cabeceras: &HeaderMap, nombre: &str) -> Option<String> {
+pub(crate) fn leer_cookie(cabeceras: &HeaderMap, nombre: &str) -> Option<String> {
     cabeceras
         .get_all(COOKIE)
         .iter()

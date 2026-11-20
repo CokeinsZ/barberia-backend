@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -12,6 +14,7 @@ pub struct ErrorHttp {
     titulo: String,
     detalle: Option<String>,
     errores: Vec<ErrorDeCampo>,
+    reintentar_en: Option<u64>,
 }
 
 /// Estado HTTP de cada categoría de error (tabla de `docs/diseno/api.md`, sección 1.3).
@@ -36,6 +39,7 @@ impl ErrorHttp {
             titulo: titulo.into(),
             detalle: None,
             errores: Vec::new(),
+            reintentar_en: None,
         }
     }
 
@@ -63,6 +67,17 @@ impl ErrorHttp {
 
     pub fn ruta_no_encontrada() -> Self {
         Self::nuevo(StatusCode::NOT_FOUND, "no_encontrado", "El recurso no existe.")
+    }
+
+    /// 429 con `Retry-After`.
+    pub fn demasiados_intentos(espera: Duration) -> Self {
+        let mut error = Self::nuevo(
+            StatusCode::TOO_MANY_REQUESTS,
+            "demasiados_intentos",
+            "Demasiados intentos. Espera un momento antes de volver a intentar.",
+        );
+        error.reintentar_en = Some(espera.as_secs().max(1));
+        error
     }
 
     pub fn interno() -> Self {
@@ -96,6 +111,7 @@ impl<E: ErrorDeAplicacion> From<E> for ErrorHttp {
             titulo: error.to_string(),
             detalle: None,
             errores: error.errores_de_campo(),
+            reintentar_en: error.reintentar_en_segundos(),
         }
     }
 }
@@ -128,6 +144,11 @@ impl IntoResponse for ErrorHttp {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if let Some(segundos) = self.reintentar_en {
+            respuesta
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(segundos));
+        }
         respuesta
     }
 }
@@ -182,6 +203,13 @@ mod pruebas {
         assert_eq!(json["type"], "/errores/validacion");
         assert_eq!(json["title"], "Revisa los datos.");
         assert_eq!(json["errores"][0]["campo"], "celular");
+    }
+
+    #[test]
+    fn demasiados_intentos_incluye_retry_after() {
+        let respuesta = ErrorHttp::demasiados_intentos(Duration::from_secs(90)).into_response();
+        assert_eq!(respuesta.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(respuesta.headers()[header::RETRY_AFTER], "90");
     }
 
     #[tokio::test]

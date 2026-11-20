@@ -1,0 +1,2927 @@
+{
+  "info": {
+    "name": "Diamante Barbería · API (fases 0 y 1)",
+    "description": "Pruebas manuales del backend: salud, identidad (sesión, invitación, recuperación, administradores), negocio y auditoría.\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 10); cada petición tiene pruebas que dicen qué se espera. Las carpetas 00 a 08 también corren completas con el *Collection Runner*.\n\nLímite: 10 inicios de sesión por IP cada 15 minutos. Las carpetas 01 a 09 usan exactamente 10; si repite el recorrido, reinicie el contador con `docker compose restart api`.\n\nLa carpeta 09 necesita preparar un barbero con SQL (está en su descripción) y la 10 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `admin_id`…) se llenan solas con los scripts de las peticiones.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 · Salud",
+      "description": "Sin sesión. `viva` responde si el proceso está arriba; `lista` además consulta PostgreSQL.",
+      "item": [
+        {
+          "name": "Viva",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/salud"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('estado = viva', () => pm.expect(pm.response.json().estado).to.eql('viva'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lista (con base de datos)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/salud/lista"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('estado = lista', () => pm.expect(pm.response.json().estado).to.eql('lista'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ruta inexistente → 404 Problem Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/no-existe"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Código «no_encontrado»', () => pm.expect(pm.response.json().codigo).to.eql('no_encontrado'));",
+                  "pm.test('application/problem+json', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 · Identidad · Primera administradora",
+      "description": "**Antes de empezar**, cree la primera administradora desde la terminal (en la raíz del repositorio):\n\n```bash\nmake administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"\n```\n\nEl comando imprime el enlace y además deja el correo en Mailpit (http://localhost:8025). La primera petición de esta carpeta lee ese correo y guarda el token en `{{token_enlace}}`. Si prefiere, copie el token del enlace impreso (lo que va después de `#token=`) en esa variable.",
+      "item": [
+        {
+          "name": "Mailpit · Leer el enlace de la invitación",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/message/latest"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const desde = Number(pm.collectionVariables.get('correo_solicitado_en') || 0);",
+                  "const url = pm.collectionVariables.get('mailpit_url') + '/api/v1/messages?limit=1';",
+                  "function intentar(restantes) {",
+                  "  pm.sendRequest(url, (error, respuesta) => {",
+                  "    const ultimo = !error && respuesta.code === 200 && respuesta.json().messages[0];",
+                  "    if (ultimo && Date.parse(ultimo.Created) > desde) return;",
+                  "    if (restantes > 0) setTimeout(() => intentar(restantes - 1), 1000);",
+                  "  });",
+                  "}",
+                  "intentar(15);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hay un correo en Mailpit', () => pm.response.to.have.status(200));",
+                  "const correo = pm.response.json();",
+                  "pm.test('Es para ' + pm.collectionVariables.get('correo_admin'), () =>",
+                  "  pm.expect(correo.To[0].Address.toLowerCase()).to.eql(pm.collectionVariables.get('correo_admin').toLowerCase()));",
+                  "const m = (correo.Text || '').match(/#token=([A-Za-z0-9_-]+)/);",
+                  "pm.test('El correo trae un enlace con token', () => pm.expect(m).to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('token_enlace', m[1]);",
+                  "console.log('Asunto:', correo.Subject, '· token guardado en {{token_enlace}}');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activar con contraseña corta → 422 (no gasta el enlace)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"corta\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en contrasena', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"contrasena\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activar la cuenta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "RF-AUT-02. Contraseña de 12 a 128 caracteres."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reusar el enlace → 410 enlace_vencido",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 410', () => pm.response.to.have.status(410));",
+                  "pm.test('Código «enlace_vencido»', () => pm.expect(pm.response.json().codigo).to.eql('enlace_vencido'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 · Identidad · Sesión",
+      "description": "La sesión viaja en la cookie `__Host-sesion` (HttpOnly, Secure, SameSite=Strict). Como la cookie es `Secure` y aquí se usa `http://`, la colección la guarda en `{{sesion}}` y la envía con el encabezado `Cookie` en cada petición del personal.\n\nLímite: 10 inicios de sesión por IP cada 15 minutos (luego 429 con `Retry-After`). Para reiniciar el contador: `docker compose restart api`.",
+      "item": [
+        {
+          "name": "Contraseña incorrecta → 401 genérico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"no es la contraseña\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El mismo mensaje sale si el correo no existe o si la cuenta está bloqueada."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Correo inexistente → mismo 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"nadie@diamante.co\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Iniciar sesión (administradora)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_admin}}\",\n  \"recordarme\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "RF-AUT-01 y RF-AUT-04. Con `recordarme: true` la cookie dura 30 días; sin él, es de sesión del navegador y el servidor la vence tras 12 horas sin uso. Guarda `{{sesion}}` y `{{admin_id}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "const m = cookie.match(/__Host-sesion=([^;]+)/);",
+                  "pm.test('Entrega la cookie de sesión', () => pm.expect(m, 'Set-Cookie').to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('sesion', m[1]);",
+                  "const cuerpo = pm.response.json();",
+                  "pm.test('Llega al panel /admin', () => pm.expect(cuerpo.panel).to.eql('/admin'));",
+                  "pm.collectionVariables.set('admin_id', cuerpo.usuario.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar la sesión",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Es la administradora', () => pm.expect(pm.response.json().usuario.rol).to.eql('administrador'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar sin sesión → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "description": "Si responde 200, Postman está enviando una cookie guardada: bórrela en «Cookies» (localhost)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token inventado → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion=token-inventado"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Origen ajeno → 403 origen_invalido (CSRF)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              },
+              {
+                "key": "Origin",
+                "value": "https://sitio-malicioso.example"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_comercial\": \"Hackeado\",\n  \"porcentaje_comision_defecto\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Toda petición que modifica datos con un `Origin` distinto del sitio se rechaza. Orígenes permitidos en desarrollo: http://localhost:4321 y http://localhost:8080."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «origen_invalido»', () => pm.expect(pm.response.json().codigo).to.eql('origen_invalido'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 · Negocio",
+      "description": "Datos de la barbería (RF-CFG-01) y días especiales (RF-CFG-04). Los datos los ve y cambia solo un administrador; los días especiales los consulta todo el personal. Cada cambio queda en la auditoría.",
+      "item": [
+        {
+          "name": "Obtener los datos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Actualizar los datos",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_comercial\": \"Diamante Barbería\",\n  \"nit\": \"900.123.456-7\",\n  \"direccion\": \"Cra. 15 # 93-47, Bogotá\",\n  \"zona_referencia\": \"Frente al parque de la 93\",\n  \"whatsapp\": \"300 555 0000\",\n  \"instagram\": \"@diamante.barberia\",\n  \"porcentaje_comision_defecto\": 45.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "El WhatsApp se guarda como 10 dígitos y el Instagram sin `@`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json();",
+                  "pm.test('WhatsApp normalizado', () => pm.expect(d.whatsapp).to.eql('3005550000'));",
+                  "pm.test('Instagram sin @', () => pm.expect(d.instagram).to.eql('diamante.barberia'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Datos inválidos → 422 con los campos",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_comercial\": \"D\",\n  \"nit\": \"123\",\n  \"whatsapp\": \"12345\",\n  \"instagram\": \"con espacios\",\n  \"porcentaje_comision_defecto\": 120\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en nombre_comercial, nit, whatsapp, instagram, porcentaje_comision_defecto', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"nombre_comercial\", \"nit\", \"whatsapp\", \"instagram\", \"porcentaje_comision_defecto\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Campo desconocido → 400",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre_comercial\": \"Diamante Barbería\",\n  \"porcentaje_comision_defecto\": 50,\n  \"campo_raro\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Código «solicitud_invalida»', () => pm.expect(pm.response.json().codigo).to.eql('solicitud_invalida'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "JSON mal formado → 400",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"nombre_comercial\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Código «solicitud_invalida»', () => pm.expect(pm.response.json().codigo).to.eql('solicitud_invalida'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar un día especial",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{fecha_futura}}\",\n  \"nombre\": \"Cierre temprano de prueba\",\n  \"tipo\": \"cierre_temprano\",\n  \"hora_cierre\": \"14:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tipos: `festivo`, `cerrado` o `cierre_temprano` (este último exige `hora_cierre`). La fecha se calcula 45 días adelante. Guarda `{{dia_id}}`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = new Date(Date.now() + 45 * 86400000);",
+                  "pm.collectionVariables.set('fecha_futura', d.toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('dia_id', pm.response.json().id);",
+                  "pm.test('Trae Location', () => pm.expect(pm.response.headers.get('Location')).to.include('/dias-especiales/'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Misma fecha otra vez → 409 fecha_ocupada",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{fecha_futura}}\",\n  \"nombre\": \"Otro\",\n  \"tipo\": \"cerrado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «fecha_ocupada»', () => pm.expect(pm.response.json().codigo).to.eql('fecha_ocupada'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fecha pasada → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"2020-01-01\",\n  \"nombre\": \"Año nuevo\",\n  \"tipo\": \"festivo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en fecha', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"fecha\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cierre temprano sin hora → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{fecha_futura}}\",\n  \"nombre\": \"Sin hora\",\n  \"tipo\": \"cierre_temprano\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en hora_cierre', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"hora_cierre\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar días especiales (próximo año)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "description": "Sin parámetros: desde hoy y durante 365 días. Acepta `?desde=AAAA-MM-DD&hasta=AAAA-MM-DD` (máximo 400 días)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Incluye el día registrado', () => pm.expect(pm.response.json().map(d => d.id)).to.include(Number(pm.collectionVariables.get('dia_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rango invertido → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales?desde=2026-12-31&hasta=2026-12-01"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en hasta', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"hasta\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eliminar el día especial",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales/{{dia_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eliminarlo otra vez → 404",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales/{{dia_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Código «no_encontrado»', () => pm.expect(pm.response.json().codigo).to.eql('no_encontrado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Identificador no numérico → 400",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales/abc"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Código «solicitud_invalida»', () => pm.expect(pm.response.json().codigo).to.eql('solicitud_invalida'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 · Identidad · Administradores",
+      "description": "RF-CFG-06. Invitar, listar, desactivar y reactivar administradores. Nunca puede quedar la barbería sin un administrador activo y nadie puede desactivarse a sí mismo. Desactivar cierra las sesiones de esa cuenta.",
+      "item": [
+        {
+          "name": "Listar administradores",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invitar un administrador",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin2}}\",\n  \"nombre\": \"Camila Rojas\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Responde `201 { id }`. El enlace de activación viaja solo por correo (Mailpit). Guarda `{{admin2_id}}`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('correo_solicitado_en', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('admin2_id', pm.response.json().id);",
+                  "pm.test('El enlace no viaja en la respuesta', () => pm.expect(pm.response.json()).to.not.have.property('enlace'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mismo correo (otras mayúsculas) → 409 correo_en_uso",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"CAMILA@diamante.co\",\n  \"nombre\": \"Otra Camila\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «correo_en_uso»', () => pm.expect(pm.response.json().codigo).to.eql('correo_en_uso'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Datos inválidos → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"no-es-correo\",\n  \"nombre\": \"X\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en correo, nombre', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"correo\", \"nombre\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Desactivarme a mí misma → 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores/{{admin_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «no_puede_desactivarse»', () => pm.expect(pm.response.json().codigo).to.eql('no_puede_desactivarse'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Administrador inexistente → 404",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores/999999",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Código «no_encontrado»', () => pm.expect(pm.response.json().codigo).to.eql('no_encontrado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mailpit · Leer la invitación de Camila",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/message/latest"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const desde = Number(pm.collectionVariables.get('correo_solicitado_en') || 0);",
+                  "const url = pm.collectionVariables.get('mailpit_url') + '/api/v1/messages?limit=1';",
+                  "function intentar(restantes) {",
+                  "  pm.sendRequest(url, (error, respuesta) => {",
+                  "    const ultimo = !error && respuesta.code === 200 && respuesta.json().messages[0];",
+                  "    if (ultimo && Date.parse(ultimo.Created) > desde) return;",
+                  "    if (restantes > 0) setTimeout(() => intentar(restantes - 1), 1000);",
+                  "  });",
+                  "}",
+                  "intentar(15);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hay un correo en Mailpit', () => pm.response.to.have.status(200));",
+                  "const correo = pm.response.json();",
+                  "pm.test('Es para ' + pm.collectionVariables.get('correo_admin2'), () =>",
+                  "  pm.expect(correo.To[0].Address.toLowerCase()).to.eql(pm.collectionVariables.get('correo_admin2').toLowerCase()));",
+                  "const m = (correo.Text || '').match(/#token=([A-Za-z0-9_-]+)/);",
+                  "pm.test('El correo trae un enlace con token', () => pm.expect(m).to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('token_enlace', m[1]);",
+                  "console.log('Asunto:', correo.Subject, '· token guardado en {{token_enlace}}');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Camila activa su cuenta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Camila inicia sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin2}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "const m = cookie.match(/__Host-sesion=([^;]+)/);",
+                  "pm.test('Entrega la cookie de sesión', () => pm.expect(m, 'Set-Cookie').to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('sesion_admin2', m[1]);",
+                  "pm.test('Cookie de sesión del navegador (sin Max-Age)', () => pm.expect(pm.response.headers.get('Set-Cookie')).to.not.include('Max-Age'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Desactivar a Camila",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores/{{admin2_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La sesión de Camila ya no sirve → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_admin2}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Camila intenta entrar → 403 acceso_suspendido",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin2}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «acceso_suspendido»', () => pm.expect(pm.response.json().codigo).to.eql('acceso_suspendido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reactivar a Camila",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores/{{admin2_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar: Camila activa y ya no pendiente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const camila = pm.response.json().find(a => a.id === Number(pm.collectionVariables.get('admin2_id')));",
+                  "pm.test('Activa', () => pm.expect(camila.activo).to.be.true);",
+                  "pm.test('Ya activó su cuenta', () => pm.expect(camila.pendiente_activacion).to.be.false);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 · Auditoría",
+      "description": "Solo administradores. Registros del más reciente al más antiguo, paginados (`pagina`, `por_pagina` hasta 100). `desde` y `hasta` son fechas de Bogotá; `hasta` incluye todo ese día.",
+      "item": [
+        {
+          "name": "Listar todo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?pagina=1&por_pagina=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Tiene registros', () => pm.expect(pm.response.json().total).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filtrar por entidad «negocio»",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?entidad=negocio"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Solo del negocio', () => pm.response.json().datos.forEach(r => pm.expect(r.entidad).to.eql('negocio')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filtrar por una cuenta (entidad usuario)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?entidad=usuario&entidad_id={{admin2_id}}",
+            "description": "Muestra la invitación, la activación, la desactivación y la reactivación de Camila."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filtrar por el día de hoy",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?desde={{hoy}}&hasta={{hoy}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('hoy', new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Parámetro desconocido → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?campo_raro=1"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Código «solicitud_invalida»', () => pm.expect(pm.response.json().codigo).to.eql('solicitud_invalida'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 · Identidad · Cambio de contraseña",
+      "description": "Con sesión. Exige la contraseña actual y cierra las **demás** sesiones de la cuenta; la actual sigue abierta. La carpeta 07 la devuelve a `{{clave_admin}}` con la recuperación.",
+      "item": [
+        {
+          "name": "Abrir una segunda sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "const m = cookie.match(/__Host-sesion=([^;]+)/);",
+                  "pm.test('Entrega la cookie de sesión', () => pm.expect(m, 'Set-Cookie').to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('sesion_otra', m[1]);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña actual incorrecta → 422",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/contrasena",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actual\": \"no es la contraseña\",\n  \"nueva\": \"{{clave_nueva}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en actual', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"actual\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nueva demasiado corta → 422",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/contrasena",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actual\": \"{{clave_admin}}\",\n  \"nueva\": \"corta\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en nueva', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"nueva\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cambiar la contraseña",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/contrasena",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actual\": \"{{clave_admin}}\",\n  \"nueva\": \"{{clave_nueva}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La sesión actual sigue abierta",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La otra sesión quedó cerrada → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_otra}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 · Identidad · Recuperación de contraseña",
+      "description": "RF-AUT-03. Responde 202 exista o no la cuenta. El enlace vence en 1 hora, es de un solo uso, pedir otro invalida el anterior y restablecer cierra **todas** las sesiones. Límite: 3 solicitudes por correo y 10 por IP cada hora.",
+      "item": [
+        {
+          "name": "Correo inexistente → 202 (no revela nada)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"nadie@diamante.co\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 202', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Correo mal escrito → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"no-es-correo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en correo', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"correo\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Solicitar recuperación",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('correo_solicitado_en', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 202', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mailpit · Leer el enlace de recuperación",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/message/latest"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const desde = Number(pm.collectionVariables.get('correo_solicitado_en') || 0);",
+                  "const url = pm.collectionVariables.get('mailpit_url') + '/api/v1/messages?limit=1';",
+                  "function intentar(restantes) {",
+                  "  pm.sendRequest(url, (error, respuesta) => {",
+                  "    const ultimo = !error && respuesta.code === 200 && respuesta.json().messages[0];",
+                  "    if (ultimo && Date.parse(ultimo.Created) > desde) return;",
+                  "    if (restantes > 0) setTimeout(() => intentar(restantes - 1), 1000);",
+                  "  });",
+                  "}",
+                  "intentar(15);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hay un correo en Mailpit', () => pm.response.to.have.status(200));",
+                  "const correo = pm.response.json();",
+                  "pm.test('Es para ' + pm.collectionVariables.get('correo_admin'), () =>",
+                  "  pm.expect(correo.To[0].Address.toLowerCase()).to.eql(pm.collectionVariables.get('correo_admin').toLowerCase()));",
+                  "const m = (correo.Text || '').match(/#token=([A-Za-z0-9_-]+)/);",
+                  "pm.test('El correo trae un enlace con token', () => pm.expect(m).to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('token_enlace', m[1]);",
+                  "console.log('Asunto:', correo.Subject, '· token guardado en {{token_enlace}}');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirmar con contraseña corta → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion/confirmar",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"corta\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en contrasena', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"contrasena\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirmar la recuperación (vuelve a la clave original)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion/confirmar",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reusar el enlace → 410",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/recuperacion/confirmar",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 410', () => pm.response.to.have.status(410));",
+                  "pm.test('Código «enlace_vencido»', () => pm.expect(pm.response.json().codigo).to.eql('enlace_vencido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La sesión anterior quedó cerrada → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La contraseña intermedia ya no sirve → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_nueva}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Iniciar sesión con la contraseña restablecida",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "const m = cookie.match(/__Host-sesion=([^;]+)/);",
+                  "pm.test('Entrega la cookie de sesión', () => pm.expect(m, 'Set-Cookie').to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('sesion', m[1]);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 · Identidad · Cerrar sesión",
+      "description": "RF-AUT-07. Siempre responde 204 y vence la cookie, haya o no sesión. Para seguir probando como administradora, vuelva a enviar «Iniciar sesión (administradora)» de la carpeta 02.",
+      "item": [
+        {
+          "name": "Cerrar sesión",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));",
+                  "pm.test('Vence la cookie', () => pm.expect(pm.response.headers.get('Set-Cookie')).to.include('Max-Age=0'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La sesión cerrada ya no sirve → 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cerrar sin sesión → 204 igual",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/sesion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 · Barbero (requiere preparar datos con SQL)",
+      "description": "El registro de barberos llega en la fase 2. Mientras tanto, cree a Santiago con SQL; esto también deja un enlace de activación con el token fijo `token-prueba-santiago` (variable `{{token_barbero}}`):\n\n```sql\n-- docker compose exec db psql -U diamante_propietario -d diamante\nWITH u AS (\n  INSERT INTO identidad.usuario (correo, rol) VALUES ('santiago@diamante.co', 'barbero') RETURNING id\n), b AS (\n  INSERT INTO barberos.barbero (usuario_id, tipo_documento, numero_documento, nombres, apellidos,\n                                fecha_nacimiento, celular, especialidad, fecha_ingreso, tipo_vinculacion,\n                                porcentaje_comision)\n  SELECT id, 'CC', '1020304050', 'Santiago', 'Ruiz', '1995-03-02', '3105559917', 'Fade', '2025-01-15',\n         'prestacion_servicios', 50\n  FROM u\n  RETURNING usuario_id\n)\nINSERT INTO identidad.token_usuario (usuario_id, proposito, token_hash, expira_en)\nSELECT usuario_id, 'activacion', sha256(convert_to('token-prueba-santiago', 'UTF8')), now() + interval '7 days'\nFROM b;\n```\n\nLuego ejecute las peticiones en orden. El barbero solo ve lo suyo: la API le responde 403 en lo que es del administrador.",
+      "item": [
+        {
+          "name": "Activar la cuenta del barbero",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_barbero}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Iniciar sesión (barbero)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_barbero}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const cookie = pm.response.headers.get('Set-Cookie') || '';",
+                  "const m = cookie.match(/__Host-sesion=([^;]+)/);",
+                  "pm.test('Entrega la cookie de sesión', () => pm.expect(m, 'Set-Cookie').to.not.be.null);",
+                  "if (m) pm.collectionVariables.set('sesion_barbero', m[1]);",
+                  "const cuerpo = pm.response.json();",
+                  "pm.test('Llega al panel /barbero', () => pm.expect(cuerpo.panel).to.eql('/barbero'));",
+                  "pm.test('Nombre tomado de su perfil', () => pm.expect(cuerpo.usuario.nombre).to.eql('Santiago Ruiz'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ve los días especiales",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_barbero}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No ve los datos del negocio → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_barbero}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «prohibido»', () => pm.expect(pm.response.json().codigo).to.eql('prohibido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No registra días especiales → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_barbero}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/negocio/dias-especiales",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{fecha_futura}}\",\n  \"nombre\": \"Intento\",\n  \"tipo\": \"cerrado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «prohibido»', () => pm.expect(pm.response.json().codigo).to.eql('prohibido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No lista administradores → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_barbero}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/administradores"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «prohibido»', () => pm.expect(pm.response.json().codigo).to.eql('prohibido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No ve la auditoría → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_barbero}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Código «prohibido»', () => pm.expect(pm.response.json().codigo).to.eql('prohibido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Después de suspenderlo (paso manual con SQL)",
+          "description": "RF-AUT-08 / E2E-AUT-06. Suspenda a Santiago hoy y repita estas peticiones:\n\n```sql\nINSERT INTO barberos.ausencia (barbero_id, tipo, desde, hasta, registrada_por)\nSELECT b.id, 'suspension', (now() AT TIME ZONE 'America/Bogota')::date,\n       (now() AT TIME ZONE 'America/Bogota')::date + 3, a.id\nFROM barberos.barbero b\nJOIN identidad.usuario bu ON bu.id = b.usuario_id AND bu.correo = 'santiago@diamante.co'\nJOIN identidad.usuario a ON a.correo = 'laura@diamante.co';\n```\n\nPara levantar la suspensión:\n\n```sql\nUPDATE barberos.ausencia SET anulada_en = now() WHERE tipo = 'suspension' AND anulada_en IS NULL;\n```",
+          "item": [
+            {
+              "name": "Su sesión deja de servir → 401",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Cookie",
+                    "value": "__Host-sesion={{sesion_barbero}}"
+                  }
+                ],
+                "url": "{{base_url}}/api/v1/auth/sesion"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                      "pm.test('Código «no_autenticado»', () => pm.expect(pm.response.json().codigo).to.eql('no_autenticado'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "No puede entrar → 403 acceso_suspendido",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{base_url}}/api/v1/auth/sesion",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"correo\": \"{{correo_barbero}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                      "pm.test('Código «acceso_suspendido»', () => pm.expect(pm.response.json().codigo).to.eql('acceso_suspendido'));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 · Bloqueo y límites de intentos (al final: deja la cuenta bloqueada)",
+      "description": "**Ejecútela al final y, antes, reinicie el límite por IP** (vive en memoria): `docker compose restart api`.\n\n- **Bloqueo de cuenta** (RNF-SEG-05): 5 contraseñas equivocadas seguidas bloquean la cuenta 15 minutos. Desde ahí ni la contraseña correcta funciona y el mensaje sigue siendo genérico; la auditoría registra `bloquear_cuenta`.\n- **Límite por IP**: el inicio de sesión número 11 en 15 minutos responde 429 con `Retry-After`.\n\nPara desbloquear la cuenta sin esperar:\n\n```sql\nUPDATE identidad.usuario SET bloqueado_hasta = NULL, intentos_fallidos = 0\nWHERE correo = 'laura@diamante.co';\n```",
+      "item": [
+        {
+          "name": "Contraseña equivocada 1/5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"frase equivocada a propósito\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Si responde 429, no reinició el límite por IP antes de empezar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña equivocada 2/5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"frase equivocada a propósito\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Si responde 429, no reinició el límite por IP antes de empezar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña equivocada 3/5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"frase equivocada a propósito\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Si responde 429, no reinició el límite por IP antes de empezar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña equivocada 4/5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"frase equivocada a propósito\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Si responde 429, no reinició el límite por IP antes de empezar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraseña equivocada 5/5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"frase equivocada a propósito\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Si responde 429, no reinició el límite por IP antes de empezar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Con la contraseña correcta, bloqueada → 401 genérico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «credenciales_invalidas»', () => pm.expect(pm.response.json().codigo).to.eql('credenciales_invalidas'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Límite por IP: repítala hasta recibir 429",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_admin}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tras el reinicio, esta carpeta lleva 6 intentos: el 11.º (envíe esta petición 5 veces) responde 429."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 (aún dentro del límite) o 429', () => pm.expect(pm.response.code).to.be.oneOf([401, 429]));",
+                  "if (pm.response.code === 429) pm.test('Trae Retry-After', () => pm.expect(pm.response.headers.has('Retry-After')).to.be.true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Utilidades · Mailpit",
+      "description": "Correos atrapados en desarrollo. Interfaz web: {{mailpit_url}}",
+      "item": [
+        {
+          "name": "Listar correos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/messages?limit=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Leer el último y guardar su enlace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/message/latest"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hay un correo', () => pm.response.to.have.status(200));",
+                  "const m = (pm.response.json().Text || '').match(/#token=([A-Za-z0-9_-]+)/);",
+                  "if (m) pm.collectionVariables.set('token_enlace', m[1]);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Vaciar el buzón",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/messages"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "mailpit_url",
+      "value": "http://localhost:8025"
+    },
+    {
+      "key": "correo_admin",
+      "value": "laura@diamante.co"
+    },
+    {
+      "key": "correo_admin2",
+      "value": "camila@diamante.co"
+    },
+    {
+      "key": "correo_barbero",
+      "value": "santiago@diamante.co"
+    },
+    {
+      "key": "clave_admin",
+      "value": "frase de prueba bien larga"
+    },
+    {
+      "key": "clave_nueva",
+      "value": "otra frase nueva y larga"
+    },
+    {
+      "key": "token_barbero",
+      "value": "token-prueba-santiago"
+    },
+    {
+      "key": "sesion",
+      "value": ""
+    },
+    {
+      "key": "sesion_otra",
+      "value": ""
+    },
+    {
+      "key": "sesion_admin2",
+      "value": ""
+    },
+    {
+      "key": "sesion_barbero",
+      "value": ""
+    },
+    {
+      "key": "token_enlace",
+      "value": ""
+    },
+    {
+      "key": "admin_id",
+      "value": ""
+    },
+    {
+      "key": "admin2_id",
+      "value": ""
+    },
+    {
+      "key": "dia_id",
+      "value": ""
+    },
+    {
+      "key": "fecha_futura",
+      "value": ""
+    },
+    {
+      "key": "hoy",
+      "value": ""
+    },
+    {
+      "key": "correo_solicitado_en",
+      "value": ""
+    }
+  ]
+}

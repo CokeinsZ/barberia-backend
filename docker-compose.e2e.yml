@@ -1,6 +1,7 @@
 # Ambiente de pruebas E2E: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up --wait
-# Base de datos en memoria (desechable y rápida). En fases siguientes se agregan el frontend,
-# Mailpit, la feature `pruebas-e2e` del backend y el reloj controlable.
+# Base de datos en memoria (desechable y rápida) y Mailpit para leer las invitaciones y los
+# enlaces de recuperación (E2E-AUT-03 y 04). En fases siguientes se agregan el frontend, la
+# feature `pruebas-e2e` del backend y el reloj controlable.
 
 services:
   db:
@@ -17,9 +18,22 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: pruebas
+      DIAMANTE_URL_PUBLICA: http://localhost:8080
     ports:
       - "127.0.0.1:8080:8080"
 
   worker:
     environment:
       DIAMANTE_ENTORNO: pruebas
+      DIAMANTE_URL_PUBLICA: http://localhost:8080
+      DIAMANTE_SMTP_HOST: mailpit
+      DIAMANTE_SMTP_PUERTO: "1025"
+      DIAMANTE_SMTP_SEGURIDAD: ninguna
+      DIAMANTE_SMTP_REMITENTE: Diamante Barbería <no-responder@diamante.local>
+    depends_on:
+      mailpit: { condition: service_started }
+
+  mailpit:
+    image: axllent/mailpit:v1.27.0
+    ports:
+      - "127.0.0.1:8025:8025"

@@ -3,6 +3,7 @@
 mod migraciones;
 #[cfg(feature = "pruebas")]
 pub mod pruebas;
+mod transacciones;
 mod unidad_de_trabajo;
 
 use std::str::FromStr;
@@ -15,6 +16,7 @@ use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 pub use migraciones::{ErrorMigraciones, OrigenMigraciones, aplicar_migraciones, combinar_migraciones};
+pub use transacciones::TransaccionesPg;
 pub use unidad_de_trabajo::UnidadDeTrabajo;
 
 use crate::configuracion::Secreto;

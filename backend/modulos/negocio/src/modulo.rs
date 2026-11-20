@@ -3,28 +3,38 @@
 
 use std::sync::Arc;
 
+use auditoria::api::Auditor;
 use axum::Router;
 use nucleo::Reloj;
+use plataforma::base_datos::{TransaccionesPg, UnidadDeTrabajo};
 use sqlx::PgPool;
 
 use crate::api::CalendarioNegocio;
 use crate::aplicacion::CasosDeUso;
+use crate::aplicacion::puertos::Puertos;
 use crate::http;
 use crate::infraestructura::postgres::{RepositorioDiasEspecialesPg, RepositorioNegocioPg};
 
 #[derive(Debug, Clone)]
 pub struct ModuloNegocio {
-    casos: Arc<CasosDeUso>,
+    casos: Arc<CasosDeUso<UnidadDeTrabajo>>,
 }
 
 impl ModuloNegocio {
-    /// Construye el módulo con sus repositorios de PostgreSQL.
-    pub fn con_postgres(pool: PgPool, reloj: Arc<dyn Reloj>) -> Self {
-        let casos = CasosDeUso::nuevos(
-            Arc::new(RepositorioNegocioPg::nuevo(pool.clone())),
-            Arc::new(RepositorioDiasEspecialesPg::nuevo(pool)),
+    /// Construye el módulo con sus repositorios de PostgreSQL. Los cambios se auditan con
+    /// `auditor` dentro de la misma transacción.
+    pub fn con_postgres(
+        pool: PgPool,
+        reloj: Arc<dyn Reloj>,
+        auditor: Arc<dyn Auditor<UnidadDeTrabajo>>,
+    ) -> Self {
+        let casos = CasosDeUso::nuevos(Puertos {
+            transacciones: Arc::new(TransaccionesPg::nuevas(pool)),
+            negocio: Arc::new(RepositorioNegocioPg),
+            dias: Arc::new(RepositorioDiasEspecialesPg),
+            auditor,
             reloj,
-        );
+        });
         Self {
             casos: Arc::new(casos),
         }
@@ -36,7 +46,7 @@ impl ModuloNegocio {
     }
 
     /// Fachada para el módulo `agenda`.
-    pub fn calendario(&self) -> Arc<dyn CalendarioNegocio> {
+    pub fn calendario(&self) -> Arc<dyn CalendarioNegocio<UnidadDeTrabajo>> {
         self.casos.listar_dias.clone()
     }
 }

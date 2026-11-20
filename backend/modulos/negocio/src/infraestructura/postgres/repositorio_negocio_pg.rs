@@ -1,21 +1,12 @@
 use async_trait::async_trait;
 use nucleo::ErrorPersistencia;
-use plataforma::base_datos::a_error_persistencia;
-use sqlx::PgPool;
+use plataforma::base_datos::{UnidadDeTrabajo, a_error_persistencia};
 
 use crate::aplicacion::puertos::RepositorioNegocio;
 use crate::dominio::entidades::{DatosNegocio, PropuestaDatosNegocio};
 
-#[derive(Debug)]
-pub(crate) struct RepositorioNegocioPg {
-    pool: PgPool,
-}
-
-impl RepositorioNegocioPg {
-    pub(crate) fn nuevo(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RepositorioNegocioPg;
 
 #[derive(sqlx::FromRow)]
 struct FilaNegocio {
@@ -29,15 +20,15 @@ struct FilaNegocio {
 }
 
 #[async_trait]
-impl RepositorioNegocio for RepositorioNegocioPg {
-    async fn obtener(&self) -> Result<DatosNegocio, ErrorPersistencia> {
+impl RepositorioNegocio<UnidadDeTrabajo> for RepositorioNegocioPg {
+    async fn obtener(&self, uow: &mut UnidadDeTrabajo) -> Result<DatosNegocio, ErrorPersistencia> {
         let fila: FilaNegocio = sqlx::query_as(
             "SELECT nombre_comercial, nit, direccion, zona_referencia, whatsapp::text AS whatsapp, instagram,
                     (porcentaje_comision_defecto * 100)::int4 AS comision_centesimas
              FROM negocio.negocio
              WHERE id = 1",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;
 
@@ -55,7 +46,11 @@ impl RepositorioNegocio for RepositorioNegocioPg {
         })
     }
 
-    async fn guardar(&self, datos: &DatosNegocio) -> Result<(), ErrorPersistencia> {
+    async fn guardar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        datos: &DatosNegocio,
+    ) -> Result<(), ErrorPersistencia> {
         sqlx::query(
             "UPDATE negocio.negocio
              SET nombre_comercial = $1, nit = $2, direccion = $3, zona_referencia = $4,
@@ -69,7 +64,7 @@ impl RepositorioNegocio for RepositorioNegocioPg {
         .bind(datos.whatsapp().map(|c| c.digitos()))
         .bind(datos.instagram())
         .bind(i32::from(datos.porcentaje_comision_defecto().centesimas()))
-        .execute(&self.pool)
+        .execute(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;
         Ok(())

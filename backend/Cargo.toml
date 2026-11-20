@@ -32,13 +32,18 @@ auditoria = { path = "modulos/auditoria" }
 trabajos = { path = "modulos/trabajos" }
 
 # Dependencias externas
+argon2 = "0.6.0"
 async-trait = "0.1.92"
 axum = "0.8.9"
+base64 = "0.23.1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10.4"
+getrandom = "0.4.3"
 http-body-util = "0.1"
+lettre = { version = "0.11.24", default-features = false, features = ["builder", "hostname", "smtp-transport", "pool", "tokio1-rustls", "rustls-tls", "ring"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11.1"
 sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "postgres", "macros", "derive", "migrate", "chrono", "json"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "signal", "net", "io-util", "time", "sync"] }
@@ -56,6 +61,13 @@ unwrap_used = "deny"
 dbg_macro = "deny"
 todo = "deny"
 print_stdout = "warn"
+
+# Argon2 sin optimizar tarda segundos por contraseña: se optimiza también en desarrollo y pruebas.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

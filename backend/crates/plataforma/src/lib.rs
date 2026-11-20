@@ -9,4 +9,5 @@
 pub mod base_datos;
 pub mod configuracion;
 pub mod http;
+pub mod seguridad;
 pub mod telemetria;

@@ -6,7 +6,7 @@ Equipo: datos, datos privados cifrados, horarios, ausencias, bloqueos, servicios
 |---|---|
 | Fase del plan | 2 |
 | Esquema de base de datos | `barberos` (ver `migraciones/`) |
-| Estado | Esqueleto: solo migraciones. Se implementa en la fase 2. |
+| Estado | Fase 1: solo el adaptador `PerfilesBarberosPg`, que implementa `identidad::api::PerfilesBarberos` (nombre del barbero de una cuenta y si puede entrar hoy, según `barberos.estados_en`). El resto se implementa en la fase 2. |
 
 ## Eventos que publica (crate `contratos`)
 
