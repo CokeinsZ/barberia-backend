@@ -31,6 +31,12 @@ pub(crate) fn rutas<C: Send + 'static>() -> Router<Estado<C>> {
         .route("/agenda/citas/{id}/confirmar", post(confirmar::<C>))
         .route("/agenda/citas/{id}/iniciar", post(iniciar::<C>))
         .route("/agenda/citas/{id}/inasistencia", post(inasistencia::<C>))
+        .route("/agenda/citas/{id}/recordatorio", post(recordatorio::<C>))
+        .route("/agenda/citas/reasignacion", post(reasignar::<C>))
+        .route(
+            "/agenda/citas/aviso-reprogramacion",
+            post(pedir_reprogramacion::<C>),
+        )
         .route("/agenda/disponibilidad/horas", get(disponibilidad::<C>))
         .route("/agenda/conflictos", post(conflictos::<C>))
         .route("/agenda/pendientes-de-cierre", get(pendientes::<C>))
@@ -109,6 +115,19 @@ struct FranjaPropuesta {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReasignacionSolicitud {
+    cita_ids: Vec<i64>,
+    barbero_destino_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AvisoReprogramacionSolicitud {
+    cita_ids: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConflictosSolicitud {
     barbero_id: i64,
     ausencia: Option<RangoFechasSolicitud>,
@@ -132,9 +151,7 @@ async fn tablero<C: Send + 'static>(
     ActorAutenticado(actor): ActorAutenticado,
     Parametros(p): Parametros<FechaParametro>,
 ) -> Result<Json<TableroDto>, ErrorHttp> {
-    let fecha = p
-        .fecha
-        .unwrap_or_else(|| Utc::now().with_timezone(&ZONA_HORARIA).date_naive());
+    let fecha = p.fecha.unwrap_or_else(|| e.casos.panel.hoy());
     Ok(Json(
         e.casos.panel.tablero(&actor, fecha).await.map_err(error_http)?,
     ))
@@ -146,7 +163,7 @@ async fn listar<C: Send + 'static>(
     ActorAutenticado(actor): ActorAutenticado,
     Parametros(p): Parametros<ListadoParametros>,
 ) -> Result<Json<Vec<CitaDto>>, ErrorHttp> {
-    let hoy = Utc::now().with_timezone(&ZONA_HORARIA).date_naive();
+    let hoy = e.casos.panel.hoy();
     let desde = p.desde.unwrap_or(hoy);
     let hasta = p.hasta.unwrap_or_else(|| desde + chrono::Days::new(7));
     let citas = e
@@ -379,4 +396,51 @@ async fn guardar_configuracion<C: Send + 'static>(
             .await
             .map_err(error_http)?,
     ))
+}
+
+/// Recordatorio manual por WhatsApp (RF-NOT-05, RF-PBA-11).
+async fn recordatorio<C: Send + 'static>(
+    State(e): State<Estado<C>>,
+    ActorAutenticado(actor): ActorAutenticado,
+    ruta: Result<Path<i64>, PathRejection>,
+) -> Result<Json<DetalleCitaDto>, ErrorHttp> {
+    Ok(Json(
+        e.casos
+            .panel
+            .recordatorio(&actor, id(ruta)?)
+            .await
+            .map_err(error_http)?,
+    ))
+}
+
+/// `{ cita_ids, barbero_destino_id }`: misma hora, otro barbero (RF-BAR-14). Todo o nada.
+async fn reasignar<C: Send + 'static>(
+    State(e): State<Estado<C>>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Entrada(s): Entrada<ReasignacionSolicitud>,
+) -> Result<Json<Vec<DetalleCitaDto>>, ErrorHttp> {
+    let ids: Vec<IdCita> = s.cita_ids.into_iter().map(IdCita).collect();
+    Ok(Json(
+        e.casos
+            .panel
+            .reasignar(&actor, &ids, IdBarbero(s.barbero_destino_id))
+            .await
+            .map_err(error_http)?,
+    ))
+}
+
+/// `{ cita_ids }`: pide a los clientes elegir otra hora con un enlace nuevo (RF-BAR-14).
+async fn pedir_reprogramacion<C: Send + 'static>(
+    State(e): State<Estado<C>>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Entrada(s): Entrada<AvisoReprogramacionSolicitud>,
+) -> Result<Json<serde_json::Value>, ErrorHttp> {
+    let ids: Vec<IdCita> = s.cita_ids.into_iter().map(IdCita).collect();
+    let avisadas = e
+        .casos
+        .panel
+        .pedir_reprogramacion(&actor, &ids)
+        .await
+        .map_err(error_http)?;
+    Ok(Json(serde_json::json!({ "avisadas": avisadas })))
 }

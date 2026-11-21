@@ -234,10 +234,9 @@ impl<C: Send + 'static> Panel<C> {
         let mut cx = p.transacciones.iniciar().await?;
         let cita = p.cita(&mut cx, id, false).await?;
         administrador_o_propio(actor, cita.barbero)?;
-        let historial = p.citas.historial(&mut cx, id).await?;
-        let dto = p.dto(&mut cx, cita, true).await?;
+        let detalle = p.detalle(&mut cx, cita).await?;
         p.transacciones.confirmar(cx).await?;
-        Ok(DetalleCitaDto { cita: dto, historial })
+        Ok(detalle)
     }
 
     /// Cita creada por el personal: sin código ni anticipación mínima; queda «Sin confirmar»
@@ -298,7 +297,13 @@ impl<C: Send + 'static> Panel<C> {
         };
         let (token, huella) = generar_token().map_err(|e| ErrorAgenda::Interno(e.0))?;
         p.citas
-            .guardar_enlace(&mut cx, id, &huella, fin + VIGENCIA_ENLACE_DESPUES)
+            .guardar_enlace(
+                &mut cx,
+                id,
+                &huella,
+                fin + VIGENCIA_ENLACE_DESPUES,
+                p.reloj.ahora(),
+            )
             .await?;
         p.citas
             .registrar_evento(&mut cx, &self.evento(id, "creada", actor))
@@ -316,10 +321,9 @@ impl<C: Send + 'static> Panel<C> {
             },
         )
         .await?;
-        let historial = p.citas.historial(&mut cx, id).await?;
-        let dto = p.dto(&mut cx, cita, true).await?;
+        let detalle = p.detalle(&mut cx, cita).await?;
         p.transacciones.confirmar(cx).await?;
-        Ok(DetalleCitaDto { cita: dto, historial })
+        Ok(detalle)
     }
 
     /// Reprograma a otra fecha, hora o barbero, respetando la disponibilidad (RF-AGE-06). El
@@ -341,15 +345,33 @@ impl<C: Send + 'static> Panel<C> {
                 "Solo se reprograman citas sin atender.",
             ));
         }
-        let servicio = p.servicio(&mut cx, cita.servicio, Modo::Personal).await?;
+        let movida = self.mover(&mut cx, actor, &cita, inicio, barbero).await?;
+        let detalle = p.detalle(&mut cx, movida).await?;
+        p.transacciones.confirmar(cx).await?;
+        Ok(detalle)
+    }
+
+    /// Mueve una cita pendiente a otra hora y/o barbero (RF-AGE-06, RF-BAR-14): respeta la
+    /// disponibilidad, deja el evento en el historial, renueva el enlace (el anterior deja de
+    /// servir) y avisa al cliente.
+    async fn mover(
+        &self,
+        cx: &mut C,
+        actor: &Actor,
+        cita: &CitaGuardada,
+        inicio: DateTime<Utc>,
+        barbero: Option<IdBarbero>,
+    ) -> Result<CitaGuardada, ErrorAgenda> {
+        let p = &self.p;
+        let servicio = p.servicio(cx, cita.servicio, Modo::Personal).await?;
         let pedido = barbero.or(Some(cita.barbero));
         let (nuevo_barbero, libres) = p
-            .reservar_hora(&mut cx, &servicio, pedido, inicio, Modo::Personal, Some(id))
+            .reservar_hora(cx, &servicio, pedido, inicio, Modo::Personal, Some(cita.id))
             .await?;
         let fin = inicio + (cita.fin - cita.inicio);
         match p
             .citas
-            .mover(&mut cx, id, nuevo_barbero, inicio, fin, false)
+            .mover(cx, cita.id, nuevo_barbero, inicio, fin, false)
             .await
         {
             Ok(()) => {}
@@ -361,7 +383,7 @@ impl<C: Send + 'static> Panel<C> {
             Err(otro) => return Err(otro.into()),
         }
         let mut evento = self.evento(
-            id,
+            cita.id,
             if nuevo_barbero == cita.barbero {
                 "reprogramada"
             } else {
@@ -371,28 +393,31 @@ impl<C: Send + 'static> Panel<C> {
         );
         evento.inicio_previo = Some(cita.inicio);
         evento.barbero_previo = Some(cita.barbero);
-        p.citas.registrar_evento(&mut cx, &evento).await?;
+        p.citas.registrar_evento(cx, &evento).await?;
         let (token, huella) = generar_token().map_err(|e| ErrorAgenda::Interno(e.0))?;
         p.citas
-            .guardar_enlace(&mut cx, id, &huella, fin + VIGENCIA_ENLACE_DESPUES)
+            .guardar_enlace(
+                cx,
+                cita.id,
+                &huella,
+                fin + VIGENCIA_ENLACE_DESPUES,
+                p.reloj.ahora(),
+            )
             .await?;
-        let movida = p.cita(&mut cx, id, false).await?;
-        p.avisar(&mut cx, &movida, "reprogramacion", Some(p.enlace_gestion(&token)))
+        let movida = p.cita(cx, cita.id, false).await?;
+        p.avisar(cx, &movida, "reprogramacion", Some(p.enlace_gestion(&token)))
             .await?;
         p.publicar(
-            &mut cx,
+            cx,
             &CitaReprogramada {
-                cita: id,
+                cita: cita.id,
                 inicio_anterior: cita.inicio,
                 inicio_nuevo: inicio,
                 barbero_nuevo: nuevo_barbero,
             },
         )
         .await?;
-        let historial = p.citas.historial(&mut cx, id).await?;
-        let dto = p.dto(&mut cx, movida, true).await?;
-        p.transacciones.confirmar(cx).await?;
-        Ok(DetalleCitaDto { cita: dto, historial })
+        Ok(movida)
     }
 
     /// Cancela con motivo y, si se pide, avisa al cliente; el horario queda libre (RF-AGE-07).
@@ -443,11 +468,10 @@ impl<C: Send + 'static> Panel<C> {
             },
         )
         .await?;
-        let historial = p.citas.historial(&mut cx, id).await?;
         let cancelada = p.cita(&mut cx, id, false).await?;
-        let dto = p.dto(&mut cx, cancelada, true).await?;
+        let detalle = p.detalle(&mut cx, cancelada).await?;
         p.transacciones.confirmar(cx).await?;
-        Ok(DetalleCitaDto { cita: dto, historial })
+        Ok(detalle)
     }
 
     /// Cambios de estado simples: confirmar (administrador), iniciar e inasistencia
@@ -502,11 +526,10 @@ impl<C: Send + 'static> Panel<C> {
             )
             .await?;
         }
-        let historial = p.citas.historial(&mut cx, id).await?;
         let actualizada = p.cita(&mut cx, id, false).await?;
-        let dto = p.dto(&mut cx, actualizada, true).await?;
+        let detalle = p.detalle(&mut cx, actualizada).await?;
         p.transacciones.confirmar(cx).await?;
-        Ok(DetalleCitaDto { cita: dto, historial })
+        Ok(detalle)
     }
 
     /// Confirmación manual, p. ej. por llamada (RN-31).
@@ -541,36 +564,151 @@ impl<C: Send + 'static> Panel<C> {
         administrador_o_propio(actor, barbero).map_err(|_| ErrorAgenda::Prohibido)?;
         let p = &self.p;
         let mut cx = p.transacciones.iniciar().await?;
-        let filtro = FiltroCitas {
-            desde: Some(p.reloj.ahora()),
-            barbero: Some(barbero),
-            estados: vec![EstadoCita::SinConfirmar, EstadoCita::Confirmada],
-            ..Default::default()
-        };
-        let futuras = p.citas.listar(&mut cx, &filtro).await?;
-        let afectadas: Vec<CitaGuardada> = futuras
-            .into_iter()
-            .filter(|c| {
-                let (i, f) = (
-                    c.inicio.with_timezone(&ZONA_HORARIA),
-                    c.fin.with_timezone(&ZONA_HORARIA),
-                );
-                match &propuesta {
-                    Propuesta::Ausencia { desde, hasta } => (*desde..=*hasta).contains(&i.date_naive()),
-                    Propuesta::Bloqueo { inicio, fin } => c.inicio < *fin && c.fin > *inicio,
-                    Propuesta::Horario(franjas) => {
-                        let dia = u8::try_from(i.weekday().number_from_monday()).unwrap_or_default();
-                        let (hi, hf): (NaiveTime, NaiveTime) = (i.time(), f.time());
-                        !franjas
-                            .iter()
-                            .any(|fr| fr.dia_semana == dia && fr.inicio <= hi && hf <= fr.fin)
-                    }
-                }
-            })
-            .collect();
+        let afectadas = citas_afectadas(p, &mut cx, barbero, &propuesta).await?;
         let dtos = p.dtos(&mut cx, afectadas, true).await?;
         p.transacciones.confirmar(cx).await?;
         Ok(dtos)
+    }
+
+    /// Fecha de hoy según el reloj del sistema (el de pruebas en E2E).
+    pub(crate) fn hoy(&self) -> NaiveDate {
+        self.p.reloj.hoy()
+    }
+
+    /// Recordatorio manual por WhatsApp desde la agenda o el panel del barbero (RF-NOT-05,
+    /// RF-PBA-11). Respeta a los clientes que desactivaron los recordatorios (RF-RES-18) y no
+    /// envía más de uno cada 15 minutos.
+    pub(crate) async fn recordatorio(
+        &self,
+        actor: &Actor,
+        id: IdCita,
+    ) -> Result<DetalleCitaDto, ErrorAgenda> {
+        let p = &self.p;
+        let ahora = p.reloj.ahora();
+        let mut cx = p.transacciones.iniciar().await?;
+        let cita = p.cita(&mut cx, id, true).await?;
+        administrador_o_propio(actor, cita.barbero)?;
+        if !matches!(cita.estado, EstadoCita::SinConfirmar | EstadoCita::Confirmada) || cita.inicio <= ahora {
+            return Err(ErrorAgenda::EstadoInvalido(
+                "Solo se recuerdan citas que aún no empiezan.",
+            ));
+        }
+        let cliente = p
+            .clientes
+            .por_ids(&mut cx, &[cita.cliente])
+            .await?
+            .into_iter()
+            .next();
+        if !cliente.is_some_and(|c| c.recordatorios_activos) {
+            return Err(ErrorAgenda::EstadoInvalido(
+                "El cliente desactivó los recordatorios.",
+            ));
+        }
+        let anteriores: Vec<i64> = p
+            .citas
+            .mensajes_de_cita(&mut cx, id)
+            .await?
+            .into_iter()
+            .filter(|(proposito, _)| proposito.starts_with("recordatorio"))
+            .map(|(_, mensaje)| mensaje)
+            .collect();
+        let reciente = p
+            .mensajes
+            .estados(&mut cx, &anteriores)
+            .await?
+            .iter()
+            .any(|m| ahora - m.creado_en < TimeDelta::minutes(15));
+        if reciente {
+            return Err(ErrorAgenda::EstadoInvalido(
+                "Ya se envió un recordatorio hace menos de 15 minutos.",
+            ));
+        }
+        p.avisar(&mut cx, &cita, "recordatorio_manual", None).await?;
+        let detalle = p.detalle(&mut cx, cita).await?;
+        p.transacciones.confirmar(cx).await?;
+        Ok(detalle)
+    }
+
+    /// Reasigna varias citas a otro barbero a la misma hora (RF-BAR-14), p. ej. tras registrar
+    /// una ausencia. Todo o nada: si una no se puede mover, ninguna cambia.
+    pub(crate) async fn reasignar(
+        &self,
+        actor: &Actor,
+        ids: &[IdCita],
+        destino: IdBarbero,
+    ) -> Result<Vec<DetalleCitaDto>, ErrorAgenda> {
+        solo_administrador(actor)?;
+        validar_lote(ids)?;
+        let p = &self.p;
+        let mut cx = p.transacciones.iniciar().await?;
+        let mut movidas = Vec::with_capacity(ids.len());
+        for id in ids {
+            let cita = p.cita(&mut cx, *id, true).await?;
+            if !matches!(cita.estado, EstadoCita::SinConfirmar | EstadoCita::Confirmada) {
+                return Err(ErrorAgenda::EstadoInvalido(
+                    "Solo se reasignan citas que aún no empiezan.",
+                ));
+            }
+            if cita.barbero == destino {
+                return Err(ErrorAgenda::campo(
+                    "barbero_destino_id",
+                    "Elige un barbero distinto al de la cita.",
+                ));
+            }
+            movidas.push(
+                self.mover(&mut cx, actor, &cita, cita.inicio, Some(destino))
+                    .await?,
+            );
+        }
+        let mut detalles = Vec::with_capacity(movidas.len());
+        for movida in movidas {
+            detalles.push(p.detalle(&mut cx, movida).await?);
+        }
+        p.transacciones.confirmar(cx).await?;
+        Ok(detalles)
+    }
+
+    /// Pide a los clientes elegir otra hora (RF-BAR-14): cada uno recibe por WhatsApp un enlace
+    /// nuevo de gestión (el anterior deja de servir). Devuelve cuántos se avisaron.
+    pub(crate) async fn pedir_reprogramacion(
+        &self,
+        actor: &Actor,
+        ids: &[IdCita],
+    ) -> Result<usize, ErrorAgenda> {
+        solo_administrador(actor)?;
+        validar_lote(ids)?;
+        let p = &self.p;
+        let ahora = p.reloj.ahora();
+        let mut cx = p.transacciones.iniciar().await?;
+        for id in ids {
+            let cita = p.cita(&mut cx, *id, true).await?;
+            if !matches!(cita.estado, EstadoCita::SinConfirmar | EstadoCita::Confirmada)
+                || cita.inicio <= ahora
+            {
+                return Err(ErrorAgenda::EstadoInvalido(
+                    "Solo se avisan citas que aún no empiezan.",
+                ));
+            }
+            let (token, huella) = generar_token().map_err(|e| ErrorAgenda::Interno(e.0))?;
+            p.citas
+                .guardar_enlace(
+                    &mut cx,
+                    cita.id,
+                    &huella,
+                    cita.fin + VIGENCIA_ENLACE_DESPUES,
+                    ahora,
+                )
+                .await?;
+            p.avisar(
+                &mut cx,
+                &cita,
+                "aviso_reprogramacion",
+                Some(p.enlace_gestion(&token)),
+            )
+            .await?;
+        }
+        p.transacciones.confirmar(cx).await?;
+        Ok(ids.len())
     }
 
     /// Citas que ya terminaron sin venta ni inasistencia (RF-AGE-12).
@@ -642,4 +780,56 @@ impl<C: Send + 'static> Panel<C> {
         p.transacciones.confirmar(cx).await?;
         Ok(nueva)
     }
+}
+
+/// Citas pendientes del barbero que quedarían afectadas por la propuesta (RF-BAR-13). La usan
+/// la consulta previa del panel y los avisos que se generan al guardar el cambio (RF-BAR-14).
+pub(crate) async fn citas_afectadas<C: Send>(
+    p: &Puertos<C>,
+    cx: &mut C,
+    barbero: IdBarbero,
+    propuesta: &Propuesta,
+) -> Result<Vec<CitaGuardada>, ErrorAgenda> {
+    let filtro = FiltroCitas {
+        desde: Some(p.reloj.ahora()),
+        barbero: Some(barbero),
+        estados: vec![EstadoCita::SinConfirmar, EstadoCita::Confirmada],
+        ..Default::default()
+    };
+    let futuras = p.citas.listar(cx, &filtro).await?;
+    let afectadas: Vec<CitaGuardada> = futuras
+        .into_iter()
+        .filter(|c| {
+            let (i, f) = (
+                c.inicio.with_timezone(&ZONA_HORARIA),
+                c.fin.with_timezone(&ZONA_HORARIA),
+            );
+            match propuesta {
+                Propuesta::Ausencia { desde, hasta } => (*desde..=*hasta).contains(&i.date_naive()),
+                Propuesta::Bloqueo { inicio, fin } => c.inicio < *fin && c.fin > *inicio,
+                Propuesta::Horario(franjas) => {
+                    let dia = u8::try_from(i.weekday().number_from_monday()).unwrap_or_default();
+                    let (hi, hf): (NaiveTime, NaiveTime) = (i.time(), f.time());
+                    !franjas
+                        .iter()
+                        .any(|fr| fr.dia_semana == dia && fr.inicio <= hi && hf <= fr.fin)
+                }
+            }
+        })
+        .collect();
+    Ok(afectadas)
+}
+
+/// Lotes de 1 a 50 citas, sin repetidas.
+fn validar_lote(ids: &[IdCita]) -> Result<(), ErrorAgenda> {
+    let mut unicas: Vec<i64> = ids.iter().map(|id| id.0).collect();
+    unicas.sort_unstable();
+    unicas.dedup();
+    if ids.is_empty() || ids.len() > 50 || unicas.len() != ids.len() {
+        return Err(ErrorAgenda::campo(
+            "cita_ids",
+            "Envía entre 1 y 50 citas, sin repetir.",
+        ));
+    }
+    Ok(())
 }

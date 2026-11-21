@@ -3,6 +3,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use nucleo::{Celular, Correo, ErrorPersistencia};
 use serde::{Deserialize, Serialize};
 
@@ -37,8 +38,9 @@ pub struct CorreoSaliente {
     pub plantilla: PlantillaCorreo,
 }
 
-/// Plantillas de WhatsApp (en la fase 4 se registran en Meta con estos nombres). Las variables
-/// viajan en la cola como JSON.
+/// Plantillas de WhatsApp. El nombre de cada variante (en `snake_case`) es el nombre de la
+/// plantilla que se registra en Meta; el texto está en `docs/diseno/plantillas-whatsapp.md`.
+/// Las variables viajan en la cola como JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "plantilla", content = "variables", rename_all = "snake_case")]
 pub enum PlantillaWhatsApp {
@@ -53,10 +55,12 @@ pub enum PlantillaWhatsApp {
         hora: String,
         enlace: String,
     },
-    /// Aviso de cancelación (RF-NOT-04).
-    CitaCancelada {
+    /// Recordatorio automático (24 h o 2 h antes) o manual, con los botones «Confirmo» y
+    /// «Cancelar cita» (RF-NOT-02, RF-NOT-03, RF-NOT-05).
+    RecordatorioCita {
         nombre: String,
         servicio: String,
+        barbero: String,
         fecha: String,
         hora: String,
     },
@@ -69,12 +73,33 @@ pub enum PlantillaWhatsApp {
         hora: String,
         enlace: String,
     },
+    /// Aviso de cancelación (RF-NOT-04).
+    CitaCancelada {
+        nombre: String,
+        servicio: String,
+        fecha: String,
+        hora: String,
+    },
+    /// Pide al cliente elegir otra hora porque el barbero no podrá atenderlo (RF-BAR-14).
+    AvisoReprogramacion {
+        nombre: String,
+        servicio: String,
+        fecha: String,
+        hora: String,
+        enlace: String,
+    },
 }
 
 impl PlantillaWhatsApp {
     /// Códigos y enlaces de gestión son secretos: sus variables se borran al enviarse.
     pub fn contiene_secreto(&self) -> bool {
-        !matches!(self, PlantillaWhatsApp::CitaCancelada { .. })
+        matches!(
+            self,
+            PlantillaWhatsApp::CodigoVerificacion { .. }
+                | PlantillaWhatsApp::CitaConfirmada { .. }
+                | PlantillaWhatsApp::CitaReprogramada { .. }
+                | PlantillaWhatsApp::AvisoReprogramacion { .. }
+        )
     }
 }
 
@@ -90,8 +115,8 @@ pub trait BuzonSalida<C: Send>: Send + Sync + fmt::Debug {
     async fn encolar_correo(&self, contexto: &mut C, correo: CorreoSaliente)
     -> Result<(), ErrorPersistencia>;
 
-    /// Encola un WhatsApp y devuelve el id del mensaje (para relacionarlo con la cita). En la
-    /// fase 3 los mensajes quedan en la cola: el envío por WhatsApp Cloud API llega en la fase 4.
+    /// Encola un WhatsApp y devuelve el id del mensaje (para relacionarlo con la cita y con
+    /// las respuestas del cliente).
     async fn encolar_whatsapp(
         &self,
         contexto: &mut C,
@@ -99,12 +124,77 @@ pub trait BuzonSalida<C: Send>: Send + Sync + fmt::Debug {
     ) -> Result<i64, ErrorPersistencia>;
 }
 
-/// Resultado de una pasada del worker.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Tipos de aviso interno para la administradora (enum `notificaciones.tipo_aviso`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TipoAviso {
+    CambioHorarioConCitas,
+    BloqueoConCitas,
+    AusenciaConCitas,
+    MensajeFallido,
+}
+
+impl TipoAviso {
+    pub fn codigo(self) -> &'static str {
+        match self {
+            TipoAviso::CambioHorarioConCitas => "cambio_horario_con_citas",
+            TipoAviso::BloqueoConCitas => "bloqueo_con_citas",
+            TipoAviso::AusenciaConCitas => "ausencia_con_citas",
+            TipoAviso::MensajeFallido => "mensaje_fallido",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NuevoAviso {
+    pub tipo: TipoAviso,
+    pub titulo: String,
+    pub detalle: Option<String>,
+    /// Datos para la pantalla, p. ej. `{ "barbero_id": 3, "cita_ids": [41, 42] }`.
+    pub datos: serde_json::Value,
+}
+
+/// Avisos internos para la administradora (RF-NOT-07, RF-BAR-14), en la transacción de quien llama.
+#[async_trait]
+pub trait Avisos<C: Send>: Send + Sync + fmt::Debug {
+    async fn crear(&self, contexto: &mut C, aviso: NuevoAviso) -> Result<i64, ErrorPersistencia>;
+}
+
+/// Estado de un mensaje de la cola, sin sus variables (pueden ser secretas).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EstadoMensaje {
+    pub id: i64,
+    pub canal: String,
+    pub plantilla: String,
+    /// `pendiente`, `enviado`, `entregado`, `leido`, `fallido` o `cancelado`.
+    pub estado: String,
+    pub intentos: i16,
+    pub ultimo_error: Option<String>,
+    pub creado_en: DateTime<Utc>,
+    pub enviado_en: Option<DateTime<Utc>>,
+}
+
+/// Lectura del estado de mensajes concretos (p. ej. los de una cita).
+#[async_trait]
+pub trait ConsultaMensajes<C: Send>: Send + Sync + fmt::Debug {
+    async fn estados(&self, contexto: &mut C, ids: &[i64]) -> Result<Vec<EstadoMensaje>, ErrorPersistencia>;
+}
+
+/// Resultado de una pasada del worker sobre la cola.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct ResumenEnvio {
     pub enviados: usize,
     pub reintentos: usize,
     pub fallidos: usize,
+}
+
+/// Resultado de procesar los webhooks recibidos.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ResumenWebhooks {
+    pub eventos: usize,
+    pub estados: usize,
+    pub respuestas: usize,
+    pub con_error: usize,
 }
 
 #[derive(Debug, thiserror::Error)]

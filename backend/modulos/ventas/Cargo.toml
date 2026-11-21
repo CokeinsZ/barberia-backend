@@ -7,7 +7,25 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+agenda.workspace = true
+async-trait.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+barberos.workspace = true
+catalogo.workspace = true
+chrono.workspace = true
+clientes.workspace = true
+contratos.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

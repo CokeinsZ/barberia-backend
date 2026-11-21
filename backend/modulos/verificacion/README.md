@@ -19,7 +19,7 @@ Códigos de verificación por WhatsApp y comprobantes de un solo uso para reserv
 
 ## Reglas
 
-- Código de 6 dígitos (muestreo por rechazo, sin sesgo), válido **10 minutos**, guardado como
+- Código de 4 dígitos (muestreo por rechazo, sin sesgo), válido **10 minutos**, guardado como
   HMAC-SHA256 con la clave del servidor; se compara en tiempo constante.
 - **5 intentos**: cada fallo responde `422 codigo_incorrecto` con `restantes`; al 5.º el código
   queda invalidado (`410 codigo_vencido`) y hay que pedir otro.

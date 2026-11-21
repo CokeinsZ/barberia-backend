@@ -1,7 +1,8 @@
 # Ambiente de pruebas E2E: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up --wait
-# Base de datos en memoria (desechable y rápida) y Mailpit para leer las invitaciones y los
-# enlaces de recuperación (E2E-AUT-03 y 04). En fases siguientes se agregan el frontend, la
-# feature `pruebas-e2e` del backend y el reloj controlable.
+# Base de datos en memoria (desechable y rápida), Mailpit para leer las invitaciones y los
+# enlaces de recuperación (E2E-AUT-03 y 04), WhatsApp simulado y reloj controlable
+# (`/api/v1/_pruebas/*`). La API ejecuta también las tareas del worker: así todo el sistema
+# vive en la misma hora simulada.
 
 services:
   db:
@@ -18,22 +19,27 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: pruebas
-      # WhatsApp simulado: GET /api/v1/_pruebas/mensajes muestra los mensajes en cola (códigos).
+      # WhatsApp simulado y rutas de apoyo: /_pruebas/mensajes, /_pruebas/reloj y
+      # /_pruebas/trabajos/ejecutar.
       DIAMANTE_PRUEBAS_E2E: "true"
-      DIAMANTE_URL_PUBLICA: http://localhost:8080
-    ports:
-      - "127.0.0.1:8080:8080"
-
-  worker:
-    environment:
-      DIAMANTE_ENTORNO: pruebas
+      # Las tareas del worker corren en la API, con el mismo reloj de pruebas.
+      DIAMANTE_WORKER_EN_API: "true"
       DIAMANTE_URL_PUBLICA: http://localhost:8080
       DIAMANTE_SMTP_HOST: mailpit
       DIAMANTE_SMTP_PUERTO: "1025"
       DIAMANTE_SMTP_SEGURIDAD: ninguna
       DIAMANTE_SMTP_REMITENTE: Diamante Barbería <no-responder@diamante.local>
+      # Las pruebas firman los webhooks de WhatsApp con este secreto (E2E-NOT-02 y 03).
+      DIAMANTE_WHATSAPP_SECRETO_APP: secreto-de-pruebas-whatsapp
+      DIAMANTE_WHATSAPP_TOKEN_VERIFICACION: token-de-pruebas
+    ports:
+      - "127.0.0.1:8080:8080"
     depends_on:
       mailpit: { condition: service_started }
+
+  # En E2E el worker no corre aparte (sus tareas van dentro de la API, ver arriba).
+  worker:
+    profiles: ["worker-separado"]
 
   mailpit:
     image: axllent/mailpit:v1.27.0

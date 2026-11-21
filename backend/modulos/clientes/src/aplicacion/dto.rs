@@ -36,7 +36,7 @@ pub struct AutorizacionDto {
     pub revocada: bool,
 }
 
-/// Ficha (RF-CLI-03). Las últimas visitas saldrán de las ventas (fase 5).
+/// Ficha (RF-CLI-03). Las últimas visitas salen de `GET /ventas?cliente_id=`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClienteFichaDto {
     #[serde(flatten)]
@@ -45,5 +45,24 @@ pub struct ClienteFichaDto {
     pub preferencias: Option<String>,
     pub recordatorios_activos: bool,
     pub cliente_desde: DateTime<Utc>,
+    /// Total gastado ÷ visitas (RN-21); `None` sin visitas.
+    pub ticket_promedio: Option<Dinero>,
     pub autorizaciones: Vec<AutorizacionDto>,
+}
+
+/// Solicitud de un titular de datos (Ley 1581, RNF-LEG-03): consulta, actualización o supresión.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SolicitudTitularDto {
+    pub id: i64,
+    pub cliente_id: Option<IdCliente>,
+    /// `consulta`, `actualizacion` o `supresion`.
+    pub tipo: String,
+    pub descripcion: String,
+    pub recibida_en: DateTime<Utc>,
+    /// Plazo legal para responder (Ley 1581): 10 días hábiles las consultas y 15 los reclamos
+    /// (actualización o supresión). No descuenta festivos: es una alerta conservadora.
+    pub responder_antes_de: NaiveDate,
+    pub respondida_en: Option<DateTime<Utc>>,
+    pub respondida_por: Option<i64>,
+    pub respuesta: Option<String>,
 }

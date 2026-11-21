@@ -9,7 +9,7 @@ use nucleo::identificadores::IdCliente;
 use nucleo::{Actor, Celular};
 use serde::Serialize;
 
-pub use crate::aplicacion::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto};
+pub use crate::aplicacion::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto, SolicitudTitularDto};
 pub use crate::aplicacion::errores::ErrorClientes;
 
 /// Cliente tal como lo necesita la agenda (y la verificación, para autocompletar después del
@@ -77,4 +77,15 @@ pub trait ClientesAgenda<C: Send>: Send + Sync + fmt::Debug {
         id: IdCliente,
         activos: bool,
     ) -> Result<(), ErrorClientes>;
+}
+
+/// Puerto que implementa `app` con la fachada de `agenda`: antes de anonimizar a un cliente hay
+/// que saber si tiene citas por atender (con el celular borrado no se le podría avisar nada).
+#[async_trait]
+pub trait AgendaDelCliente<C: Send>: Send + Sync + fmt::Debug {
+    async fn citas_pendientes(
+        &self,
+        cx: &mut C,
+        cliente: IdCliente,
+    ) -> Result<i64, nucleo::ErrorPersistencia>;
 }

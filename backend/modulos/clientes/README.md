@@ -5,7 +5,7 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 
 | | |
 |---|---|
-| Fase del plan | 3 ✅ (registro y búsqueda) · 7 (habeas data, anonimización, segmentos configurables) |
+| Fase del plan | 3 ✅ (registro y búsqueda) · 5 ✅ (métricas por ventas, anonimización y solicitudes del titular) · 8 (segmentos configurables) |
 | Esquema de base de datos | `clientes` (ver `migraciones/`); lectura por la vista `v_cliente_resumen` |
 | Fachada | `api::ClientesAgenda<C>`: `por_celular`, `por_ids`, `registrar_en_linea`, `registrar_desde_panel`, `cambiar_recordatorios` (la usan `agenda` y, a través de `app`, `verificacion`) |
 
@@ -18,6 +18,10 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 | GET | `/clientes/{id}` | Administrador | Ficha con autorizaciones de datos |
 | POST | `/clientes` | Personal | `409 celular_en_uso` si el celular ya existe |
 | PUT | `/clientes/{id}` | Administrador | Datos, preferencias y recordatorios |
+| POST | `/clientes/{id}/anonimizacion` | Administrador | `{ motivo }` → `204`. Borra nombre, celular, correo, cumpleaños y preferencias; revoca la autorización y conserva las cifras (RF-CLI-07). `409` si tiene citas por atender |
+| GET | `/clientes/solicitudes-titular?abiertas=true&pagina=` | Administrador | Solicitudes de habeas data con su plazo legal (`responder_antes_de`) |
+| POST | `/clientes/solicitudes-titular` | Administrador | `{ cliente_id, tipo: consulta \| actualizacion \| supresion, descripcion }` |
+| PATCH | `/clientes/solicitudes-titular/{id}` | Administrador | `{ respuesta }`; una sola vez (RNF-LEG-03) |
 
 ## Reglas
 
@@ -27,6 +31,13 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 - **Desde el panel**: el cliente que llamó se registra sin autorización en línea.
 - Segmentos: `sin_visitas`, `nuevo` (1 visita), `recurrente`, `frecuente` e `inactivo` (sin
   volver en mucho tiempo); se calculan en el dominio a partir de la proyección de métricas.
+- La ficha trae el ticket promedio (total gastado ÷ visitas, RN-21); las últimas visitas salen
+  de `GET /ventas?cliente_id=`.
+- La búsqueda ignora tildes y mayúsculas en el nombre y compara los dígitos del celular aunque se
+  escriban con espacios («555 99», E2E-CLI-01).
+- Plazos de las solicitudes del titular (Ley 1581): 10 días hábiles las consultas y 15 los
+  reclamos (actualización o supresión). Es una alerta: no descuenta festivos.
+- Puerto `api::AgendaDelCliente`: lo implementa `app` con la agenda (citas por atender).
 
 ## Eventos que publica (crate `contratos`)
 
@@ -36,7 +47,9 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 
 - `InasistenciaMarcada` (agenda): suma una inasistencia en `metricas` (dentro de la misma
   transacción que marca la cita).
-- `VentaRegistrada`, `VentaAnulada` (ventas, fase 5): visitas y gasto.
+- `VentaRegistrada` (ventas): suma la visita, el gasto (venta neta), la última visita y la visita
+  con ese barbero (barbero habitual). Las ventas a «cliente ocasional» no suman.
+- `VentaAnulada` (ventas): resta la visita y el gasto y toma la última visita que trae el evento.
 
 ## Estructura
 

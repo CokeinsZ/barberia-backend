@@ -84,6 +84,11 @@ impl ModuloBarberos {
         Arc::new(PerfilesBarberosPg::nuevo(reloj))
     }
 
+    /// Fachada para `ventas`: estado del barbero en la fecha, sus servicios y su comisión.
+    pub fn equipo_para_ventas(&self) -> Arc<dyn crate::api::EquipoVentas<UnidadDeTrabajo>> {
+        Arc::new(crate::infraestructura::postgres::EquipoVentasPg)
+    }
+
     /// Puerto de `catalogo`: cuántos barberos vigentes ofrecen cada servicio.
     pub fn oferentes_para_catalogo(reloj: Arc<dyn Reloj>) -> Arc<dyn OferentesServicio<UnidadDeTrabajo>> {
         Arc::new(OferentesServicioPg::nuevo(reloj))

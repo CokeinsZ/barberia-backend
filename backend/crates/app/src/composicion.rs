@@ -11,18 +11,21 @@ use catalogo::{DependenciasCatalogo, ModuloCatalogo};
 use clientes::{DependenciasClientes, ModuloClientes};
 use identidad::{DependenciasIdentidad, ModuloIdentidad};
 use negocio::ModuloNegocio;
-use notificaciones::ModuloNotificaciones;
+use notificaciones::{DependenciasNotificaciones, ModuloNotificaciones};
 use nucleo::eventos::BusEventos;
-use nucleo::{Reloj, RelojSistema};
+use nucleo::{Reloj, RelojDePruebas, RelojSistema};
 use plataforma::base_datos::{UnidadDeTrabajo, conectar};
 use plataforma::configuracion::Configuracion;
 use plataforma::http::{ConfianzaProxy, OrigenesPermitidos, Sesiones};
 use plataforma::seguridad::{Cifrador, FirmadorUrls};
 use sqlx::PgPool;
+use trabajos::ModuloTrabajos;
+use ventas::{DependenciasVentas, ModuloVentas};
 use verificacion::{DependenciasVerificacion, ModuloVerificacion};
 
 use crate::ErrorDeArranque;
-use crate::adaptadores::ClientesParaVerificacion;
+use crate::adaptadores::{AgendaParaClientes, ClientesParaVerificacion};
+use crate::tareas;
 
 /// Clave AES fija solo para desarrollo y pruebas, cuando no se define `DIAMANTE_CLAVE_CIFRADO`
 /// (en producción la configuración la exige). Así los datos cifrados sobreviven a un reinicio.
@@ -31,6 +34,7 @@ const CLAVE_CIFRADO_DESARROLLO: [u8; 32] = *b"diamante-solo-desarrollo-000000!";
 #[derive(Debug, Clone)]
 pub(crate) struct Composicion {
     pub(crate) pool: PgPool,
+    pub(crate) reloj: Arc<dyn Reloj>,
     pub(crate) sesiones: Sesiones,
     pub(crate) origenes: OrigenesPermitidos,
     pub(crate) confianza_proxy: ConfianzaProxy,
@@ -44,8 +48,12 @@ pub(crate) struct Composicion {
     pub(crate) clientes: ModuloClientes,
     pub(crate) verificacion: ModuloVerificacion,
     pub(crate) agenda: ModuloAgenda,
-    /// `GET /api/v1/_pruebas/mensajes` (solo con `DIAMANTE_PRUEBAS_E2E=true`).
+    pub(crate) ventas: ModuloVentas,
+    pub(crate) trabajos: ModuloTrabajos,
+    /// Rutas `/api/v1/_pruebas/*` (solo con `DIAMANTE_PRUEBAS_E2E=true`).
     pub(crate) rutas_de_pruebas: bool,
+    /// Reloj ajustable con `/_pruebas/reloj` (solo con las rutas de pruebas).
+    pub(crate) reloj_de_pruebas: Option<Arc<RelojDePruebas>>,
 }
 
 impl Composicion {
@@ -55,20 +63,50 @@ impl Composicion {
             configuracion.base_datos.max_conexiones,
         )
         .await?;
-        Self::con_pool(pool, Arc::new(RelojSistema), configuracion)
+        if configuracion.rutas_de_pruebas {
+            Self::con_reloj_de_pruebas(pool, Arc::new(RelojDePruebas::default()), configuracion)
+        } else {
+            Self::con_pool(pool, Arc::new(RelojSistema), configuracion)
+        }
     }
 
-    /// Orden de construcción: primero los módulos que aportan puertos (auditoría, buzón de
-    /// salida, archivos, parámetros del negocio y los adaptadores de `barberos` que necesitan
-    /// `identidad` y `catalogo`) y después los que los usan.
     pub(crate) fn con_pool(
         pool: PgPool,
         reloj: Arc<dyn Reloj>,
         configuracion: &Configuracion,
     ) -> Result<Self, ErrorDeArranque> {
+        Self::armar(pool, reloj, None, configuracion)
+    }
+
+    /// Con el reloj de pruebas, que `/_pruebas/reloj` puede mover.
+    pub(crate) fn con_reloj_de_pruebas(
+        pool: PgPool,
+        reloj: Arc<RelojDePruebas>,
+        configuracion: &Configuracion,
+    ) -> Result<Self, ErrorDeArranque> {
+        Self::armar(pool, reloj.clone(), Some(reloj), configuracion)
+    }
+
+    /// Orden de construcción: primero el bus y los módulos que aportan puertos (auditoría,
+    /// notificaciones, archivos, parámetros del negocio y los adaptadores de `barberos` que
+    /// necesitan `identidad` y `catalogo`), después los que los usan y, al final, las
+    /// suscripciones a eventos y la cola de trabajos.
+    fn armar(
+        pool: PgPool,
+        reloj: Arc<dyn Reloj>,
+        reloj_de_pruebas: Option<Arc<RelojDePruebas>>,
+        configuracion: &Configuracion,
+    ) -> Result<Self, ErrorDeArranque> {
+        // Bus de eventos en la transacción: cada módulo suscribe aquí sus reacciones.
+        let bus: Arc<BusEventos<UnidadDeTrabajo>> = Arc::new(BusEventos::nuevo());
         let auditoria = ModuloAuditoria::con_postgres(pool.clone(), reloj.clone());
-        let notificaciones =
-            ModuloNotificaciones::con_postgres(pool.clone(), reloj.clone(), configuracion.smtp.as_ref())?;
+        let notificaciones = ModuloNotificaciones::con_postgres(DependenciasNotificaciones {
+            pool: pool.clone(),
+            reloj: reloj.clone(),
+            smtp: configuracion.smtp.as_ref(),
+            whatsapp: &configuracion.whatsapp,
+            bus: bus.clone(),
+        })?;
         let firmador = match &configuracion.clave_firma {
             Some(clave) => FirmadorUrls::nuevo(clave.exponer().as_bytes()),
             None => {
@@ -104,10 +142,6 @@ impl Composicion {
             auditor: auditoria.auditor(),
             oferentes: ModuloBarberos::oferentes_para_catalogo(reloj.clone()),
         });
-        // Bus de eventos en la transacción: cada módulo suscribe aquí sus reacciones.
-        let mut bus: BusEventos<UnidadDeTrabajo> = BusEventos::nuevo();
-        ModuloClientes::suscribir(&mut bus);
-        let bus = Arc::new(bus);
         let barberos = ModuloBarberos::con_postgres(DependenciasBarberos {
             pool: pool.clone(),
             reloj: reloj.clone(),
@@ -119,10 +153,14 @@ impl Composicion {
             bus: bus.clone(),
             cifrador,
         });
+        // `clientes` pregunta a la agenda (construida después) si un cliente tiene citas por
+        // atender: el adaptador se conecta cuando la agenda existe.
+        let agenda_para_clientes = Arc::new(AgendaParaClientes::default());
         let clientes = ModuloClientes::con_postgres(DependenciasClientes {
             pool: pool.clone(),
             reloj: reloj.clone(),
             auditor: auditoria.auditor(),
+            agenda: agenda_para_clientes.clone(),
         });
         let verificacion = ModuloVerificacion::con_postgres(DependenciasVerificacion {
             pool: pool.clone(),
@@ -133,7 +171,7 @@ impl Composicion {
         });
         let agenda = ModuloAgenda::con_postgres(DependenciasAgenda {
             pool: pool.clone(),
-            reloj,
+            reloj: reloj.clone(),
             equipo: barberos.equipo(),
             catalogo: catalogo.servicios(),
             calendario: negocio.calendario(),
@@ -141,13 +179,48 @@ impl Composicion {
             clientes: clientes.clientes(),
             comprobantes: verificacion.comprobantes(),
             buzon: notificaciones.buzon(),
+            avisos: notificaciones.avisos(),
+            mensajes: notificaciones.mensajes(),
             auditor: auditoria.auditor(),
-            bus,
+            bus: bus.clone(),
             url_publica: configuracion.url_publica.clone(),
         });
 
+        agenda_para_clientes.conectar(agenda.citas_de_clientes());
+        let ventas = ModuloVentas::con_postgres(DependenciasVentas {
+            pool: pool.clone(),
+            reloj: reloj.clone(),
+            citas: agenda.citas_para_ventas(),
+            equipo: barberos.equipo_para_ventas(),
+            catalogo: catalogo.servicios(),
+            clientes: clientes.clientes(),
+            auditor: auditoria.auditor(),
+            bus: bus.clone(),
+        });
+
+        // Suscripciones (se agregan con el bus ya repartido: los manejadores usan fachadas
+        // construidas arriba).
+        ModuloClientes::suscribir(&bus);
+        agenda.suscribir(&bus);
+
+        let trabajos = ModuloTrabajos::con_postgres(
+            pool.clone(),
+            reloj.clone(),
+            tareas::programaciones(),
+            tareas::tareas(&tareas::Modulos {
+                pool: pool.clone(),
+                reloj: reloj.clone(),
+                identidad: identidad.clone(),
+                verificacion: verificacion.clone(),
+                agenda: agenda.clone(),
+                notificaciones: notificaciones.clone(),
+            }),
+            tareas::nombre_del_proceso(),
+        );
+
         Ok(Self {
             pool,
+            reloj,
             sesiones: Sesiones(identidad.validador_sesiones()),
             origenes: OrigenesPermitidos(Arc::new(configuracion.origenes_permitidos.clone())),
             confianza_proxy: ConfianzaProxy(configuracion.confiar_proxy),
@@ -161,7 +234,10 @@ impl Composicion {
             clientes,
             verificacion,
             agenda,
+            ventas,
+            trabajos,
             rutas_de_pruebas: configuracion.rutas_de_pruebas,
+            reloj_de_pruebas,
         })
     }
 }

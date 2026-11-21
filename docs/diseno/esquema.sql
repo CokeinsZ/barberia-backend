@@ -641,7 +641,8 @@ CREATE TYPE agenda.origen_cita            AS ENUM ('en_linea', 'panel');
 CREATE TYPE agenda.motivo_cancelacion     AS ENUM ('solicitud_cliente', 'barbero_no_disponible', 'otro');
 CREATE TYPE agenda.evento_cita            AS ENUM ('creada', 'confirmada', 'iniciada', 'atendida', 'no_asistio',
                                                    'cancelada', 'reprogramada', 'reasignada');
-CREATE TYPE agenda.proposito_mensaje      AS ENUM ('confirmacion', 'recordatorio_24h', 'recordatorio_2h', 'cancelacion', 'reprogramacion');
+CREATE TYPE agenda.proposito_mensaje      AS ENUM ('confirmacion', 'recordatorio_24h', 'recordatorio_2h', 'cancelacion', 'reprogramacion',
+                                                   'recordatorio_manual', 'aviso_reprogramacion');
 CREATE TYPE agenda.politica_inasistencias AS ENUM ('confirmar_por_llamada', 'bloquear_reserva_en_linea', 'sin_restriccion');
 
 -- Una sola fila.

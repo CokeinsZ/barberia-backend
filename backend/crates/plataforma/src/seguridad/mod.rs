@@ -9,7 +9,7 @@ mod tokens;
 
 pub use cifrado::Cifrador;
 pub use contrasenas::{cifrar_contrasena, verificar_contrasena};
-pub use firmas::FirmadorUrls;
+pub use firmas::{FirmadorUrls, firma_webhook, iguales_en_tiempo_constante, verificar_firma_webhook};
 pub use limitador::LimitadorIntentos;
 pub use tokens::{Huella, generar_token, huella_token};
 

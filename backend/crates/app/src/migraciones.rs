@@ -102,7 +102,10 @@ mod pruebas {
                 "agenda",
                 "ventas",
                 "auditoria",
-                "trabajos"
+                "trabajos",
+                // Fase 4: propósitos nuevos de los mensajes de una cita (va al final porque
+                // las migraciones se ordenan por versión).
+                "agenda"
             ]
         );
     }

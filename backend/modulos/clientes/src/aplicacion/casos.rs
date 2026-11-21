@@ -210,6 +210,13 @@ async fn ficha<C: Send>(p: &Puertos<C>, cx: &mut C, id: IdCliente) -> Result<Cli
         preferencias: g.preferencias.clone(),
         recordatorios_activos: g.conocido.recordatorios_activos,
         cliente_desde: g.creado_en,
+        ticket_promedio: (g.conocido.visitas > 0)
+            .then(|| {
+                let total = g.total_gastado;
+                let visitas = i64::from(g.conocido.visitas);
+                nucleo::Dinero::pesos((total + visitas / 2) / visitas).ok()
+            })
+            .flatten(),
         autorizaciones,
     })
 }

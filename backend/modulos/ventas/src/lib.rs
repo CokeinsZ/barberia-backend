@@ -1,11 +1,21 @@
 //! # Módulo `ventas`
 //!
-//! Ventas, pagos, descuentos, caja del día y cierres de caja.
+//! Ventas con ticket consecutivo sin huecos, descuentos con motivo, propina libre (100 % del
+//! barbero), pagos, anulación auditada, caja del día, «Lo que llevas hoy» del barbero y
+//! cierres de caja (RF-VEN, RF-PBA-03 a 05).
 //!
-//! **Estado**: fase 0 — el esquema `ventas` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 5 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! Al registrar una venta publica `VentaRegistrada` en la misma transacción: la agenda deja la
+//! cita «Atendida» y `clientes` suma la visita. Al anularla publica `VentaAnulada`.
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod dominio;
+mod http;
+mod infraestructura;
+mod modulo;
+
+pub mod api;
+
+pub use modulo::{DependenciasVentas, ModuloVentas};
 
 /// Migraciones del esquema `ventas`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

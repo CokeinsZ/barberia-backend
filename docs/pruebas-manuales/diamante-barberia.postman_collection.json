@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Diamante Barbería · API (fases 0 a 3)",
-    "description": "Pruebas manuales del backend: salud, identidad, negocio, auditoría, catálogo, barberos, archivos, agenda (landing, disponibilidad, reserva en línea, gestión por enlace y panel), verificación por WhatsApp y clientes.\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025; el WhatsApp simulado se lee en `GET /api/v1/_pruebas/mensajes`).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 21); cada petición tiene pruebas que dicen qué se espera.\n\nLas peticiones de carga de archivos (carpeta 13) piden elegir un archivo en la pestaña *Body*.\n\nLímites: 10 inicios de sesión por IP cada 15 minutos (las carpetas 01 a 20 usan exactamente 10) y 10 códigos de verificación por IP cada hora (las carpetas 17 a 20 usan 6). Antes de la carpeta 21, y para repetir el recorrido, reinicie los contadores con `docker compose restart api`. Las carpetas 01, 04 y 07 dependen de una base nueva (la primera administradora y Camila se crean una sola vez); las 09 a 20 se pueden repetir.\n\nLa carpeta 20 puede esperar hasta un minuto antes de pedir otro código (la espera entre códigos). La carpeta 21 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `barbero_id`, `comprobante`…) se llenan solas con los scripts de las peticiones.\n\nLas peticiones a la API tienen desactivado el almacén de cookies de Postman (*Settings → Disable cookie jar*): la sesión viaja solo en el encabezado `Cookie` con la variable de cada petición, así «sin sesión» es de verdad sin sesión.",
+    "name": "Diamante Barbería · API (fases 0 a 5)",
+    "description": "Pruebas manuales del backend: salud, identidad, negocio, auditoría, catálogo, barberos, archivos, agenda (landing, disponibilidad, reserva en línea, gestión por enlace y panel), verificación por WhatsApp, clientes, notificaciones (WhatsApp simulado, webhooks y avisos), trabajos y ventas.\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025; el WhatsApp simulado se lee en `GET /api/v1/_pruebas/mensajes`).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 28); cada petición tiene pruebas que dicen qué se espera.\n\nLas peticiones de carga de archivos (carpeta 13) piden elegir un archivo en la pestaña *Body*.\n\nLímites: 10 inicios de sesión por IP cada 15 minutos (las carpetas 01 a 20 usan exactamente 10; las 21 a 28, ocho) y 10 códigos de verificación por IP cada hora (las carpetas 17 a 20 usan 6). Antes de la carpeta 21, y para repetir el recorrido, reinicie los contadores con `docker compose restart api`. Las carpetas 01, 04 y 07 dependen de una base nueva (la primera administradora y Camila se crean una sola vez); las 09 a 27 se pueden repetir.\n\nLa carpeta 20 puede esperar hasta un minuto antes de pedir otro código (la espera entre códigos). La carpeta 28 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `barbero_id`, `comprobante`…) se llenan solas con los scripts de las peticiones.\n\nLas peticiones a la API tienen desactivado el almacén de cookies de Postman (*Settings → Disable cookie jar*): la sesión viaja solo en el encabezado `Cookie` con la variable de cada petición, así «sin sesión» es de verdad sin sesión.\n\nWebhooks de WhatsApp (carpeta 22): se firman con la variable `secreto_whatsapp` (`secreto-de-desarrollo-whatsapp` con `make dev`; en el stack E2E use `secreto-de-pruebas-whatsapp` y `token_webhook` = `token-de-pruebas`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -7660,8 +7660,2927 @@
       ]
     },
     {
-      "name": "21 · Bloqueo y límites de intentos (al final: deja la cuenta bloqueada)",
-      "description": "**Ejecútela al final y, antes, reinicie el límite por IP** (vive en memoria): `docker compose restart api`.\n\n- **Bloqueo de cuenta** (RNF-SEG-05): 5 contraseñas equivocadas seguidas bloquean la cuenta 15 minutos. Desde ahí ni la contraseña correcta funciona y el mensaje sigue siendo genérico; la auditoría registra `bloquear_cuenta`.\n- **Límite por IP**: el inicio de sesión número 11 en 15 minutos responde 429 con `Retry-After`.\n\nPara desbloquear la cuenta sin esperar:\n\n```sql\nUPDATE identidad.usuario SET bloqueado_hasta = NULL, intentos_fallidos = 0\nWHERE correo = 'laura@diamante.co';\n```",
+      "name": "21 · Worker · Reloj, confirmación y recordatorios",
+      "description": "**Antes de esta carpeta reinicie la API** (`docker compose restart api`): las carpetas 01 a 20 agotaron los 10 inicios de sesión por IP y la carpeta 25 necesita uno (la 28, siete).\n\nFase 4 (RF-NOT-01, 02 y 05). El WhatsApp es **simulado**: el worker marca el mensaje como enviado y escribe el texto en el log; aquí se lee con `GET /_pruebas/mensajes`. `/_pruebas/reloj` mueve la hora de la API y `/_pruebas/trabajos/ejecutar` corre una pasada del worker con esa hora (en desarrollo el worker aparte sigue con la hora real). E2E-NOT-01: con el reloj 24 h antes de la cita, dos pasadas envían **un solo** recordatorio.",
+      "item": [
+        {
+          "name": "Reloj del servidor",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Celulares nuevos en cada recorrido (el de fallas termina en 0000: el simulador falla).",
+                  "const n = () => String(Math.floor(Math.random() * 1e6)).padStart(6, '0');",
+                  "pm.collectionVariables.set('celular_recordatorio', '31' + n() + '11');",
+                  "pm.collectionVariables.set('celular_falla', '3' + n().slice(0, 5) + '0000');",
+                  "pm.collectionVariables.set('celular_venta', '32' + n() + '22');",
+                  "pm.collectionVariables.set('celular_venta2', '33' + n() + '33');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Trae la hora', () => pm.expect(pm.response.json().ahora).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Horas de Daniel el día de la cita (vista del personal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/disponibilidad/horas?servicio_id={{servicio_corte_id}}&barbero_id={{barbero3_id}}&fecha={{dia_cita}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const horas = ['manana', 'tarde', 'noche'].flatMap(f => pm.response.json()[f]).map(h => h.inicio);",
+                  "pm.test('Tiene horas libres', () => pm.expect(horas.length).to.be.above(2));",
+                  "const elegida = horas[Math.floor(horas.length / 2)];",
+                  "pm.collectionVariables.set('inicio_recordatorio', elegida);",
+                  "pm.collectionVariables.set('horas_daniel', JSON.stringify(horas));",
+                  "// 24 h antes de la cita, más un minuto.",
+                  "pm.collectionVariables.set('reloj_recordatorio', new Date(Date.parse(elegida) - 86400000 + 60000).toISOString());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cita «Sin confirmar» para Ana (llamó por teléfono)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_nuevo\": {\n    \"nombre\": \"Ana Ríos\",\n    \"celular\": \"{{celular_recordatorio}}\"\n  },\n  \"servicio_id\": {{servicio_corte_id}},\n  \"barbero_id\": {{barbero3_id}},\n  \"inicio\": \"{{inicio_recordatorio}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Sin confirmar', () => pm.expect(pm.response.json().estado).to.eql('sin_confirmar'));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('cita_recordatorio_id', pm.response.json().id);",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('cliente_recordatorio_id', pm.response.json().cliente.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker ahora",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WhatsApp simulado · La confirmación salió",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/mensajes?destinatario={{celular_recordatorio}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().find(m => m.plantilla === 'cita_confirmada');",
+                  "pm.test('Enviada por el simulador', () => pm.expect([m.estado, m.id_proveedor.startsWith('wamid.simulado.')]).to.eql(['enviado', true]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recordatorio manual (RF-NOT-05)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/{{cita_recordatorio_id}}/recordatorio"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Queda en sus mensajes', () => pm.expect(pm.response.json().mensajes.map(m => m.proposito)).to.include('recordatorio_manual'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Otro recordatorio enseguida → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/{{cita_recordatorio_id}}/recordatorio",
+            "description": "Uno cada 15 minutos como máximo."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «estado_invalido»', () => pm.expect(pm.response.json().codigo).to.eql('estado_invalido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Recordatorios antes de adelantar el reloj",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/mensajes?destinatario={{celular_recordatorio}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('recordatorios_antes', pm.response.json().filter(m => m.plantilla === 'recordatorio_cita').length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Adelantar el reloj a 24 h antes de la cita",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ahora\": \"{{reloj_recordatorio}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Con el reloj días adelante, las sesiones abiertas vencen (12 h de inactividad): las consultas con sesión van después de volver a la hora real."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (1.ª vez)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (2.ª vez)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Un solo recordatorio de 24 h (E2E-NOT-01)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/mensajes?destinatario={{celular_recordatorio}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const recordatorios = pm.response.json().filter(m => m.plantilla === 'recordatorio_cita');",
+                  "pm.test('Exactamente uno más', () => pm.expect(recordatorios).to.have.length(Number(pm.collectionVariables.get('recordatorios_antes')) + 1));",
+                  "// El más reciente es el automático: sus botones se prueban en la carpeta 22.",
+                  "if (recordatorios.length) pm.collectionVariables.set('wamid_recordatorio', recordatorios[0].id_proveedor);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Volver a la hora real",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Hora real', () => pm.expect(Math.abs(Date.parse(pm.response.json().ahora) - Date.now())).to.be.below(60000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Detalle de la cita con sus mensajes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/{{cita_recordatorio_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Confirmación y recordatorios', () => pm.expect(pm.response.json().mensajes.map(m => m.proposito)).to.include.members(['confirmacion', 'recordatorio_manual', 'recordatorio_24h']));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "22 · Notificaciones · Webhooks de WhatsApp firmados",
+      "description": "RNF-SEG-10 y RF-NOT-03. Meta firma cada evento con `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo con el secreto de la app). Estas peticiones firman en el *pre-request* con la variable `secreto_whatsapp` (en `make dev`: `secreto-de-desarrollo-whatsapp`; en el stack E2E: `secreto-de-pruebas-whatsapp`). El webhook guarda el evento y responde 200; el worker lo procesa.",
+      "item": [
+        {
+          "name": "Registrar el webhook en Meta (verificación)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token={{token_webhook}}&hub.challenge=1158201444"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Devuelve el reto', () => pm.expect(pm.response.text()).to.eql('1158201444'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token de verificación equivocado → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=otro&hub.challenge=1"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Firma inválida → 401 (E2E-NOT-03)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Hub-Signature-256",
+                "value": "sha256=00"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/webhooks/whatsapp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"WABA\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"messages\": [\n              {\n                \"from\": \"573000000000\",\n                \"id\": \"wamid.respuesta.confirmar\",\n                \"type\": \"button\",\n                \"context\": {\n                  \"id\": \"{{wamid_recordatorio}}\"\n                },\n                \"button\": {\n                  \"payload\": \"confirmar\",\n                  \"text\": \"Confirmo\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Código «firma_invalida»', () => pm.expect(pm.response.json().codigo).to.eql('firma_invalida'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ana toca «Confirmo» (firmado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/webhooks/whatsapp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"WABA\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"messages\": [\n              {\n                \"from\": \"573000000000\",\n                \"id\": \"wamid.respuesta.confirmar\",\n                \"type\": \"button\",\n                \"context\": {\n                  \"id\": \"{{wamid_recordatorio}}\"\n                },\n                \"button\": {\n                  \"payload\": \"confirmar\",\n                  \"text\": \"Confirmo\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Firma como Meta: HMAC-SHA256 del cuerpo exacto con el secreto de la app.",
+                  "const cuerpo = pm.variables.replaceIn(pm.request.body.raw);",
+                  "const firma = CryptoJS.HmacSHA256(cuerpo, pm.variables.get('secreto_whatsapp')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + firma });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Meta informa «leído» (firmado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/webhooks/whatsapp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entry\": [\n    {\n      \"changes\": [\n        {\n          \"value\": {\n            \"statuses\": [\n              {\n                \"id\": \"{{wamid_recordatorio}}\",\n                \"status\": \"read\"\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Firma como Meta: HMAC-SHA256 del cuerpo exacto con el secreto de la app.",
+                  "const cuerpo = pm.variables.replaceIn(pm.request.body.raw);",
+                  "const firma = CryptoJS.HmacSHA256(cuerpo, pm.variables.get('secreto_whatsapp')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + firma });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (procesa los webhooks)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);",
+                  "pm.test('Procesó la respuesta', () => pm.expect(pm.response.json().webhooks.respuestas).to.be.at.least(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La cita quedó confirmada (E2E-NOT-02)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/{{cita_recordatorio_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('Confirmada', () => pm.expect(c.estado).to.eql('confirmada'));",
+                  "pm.test('Por la clienta', () => pm.expect(c.historial.slice(-1)[0].actor).to.eql('cliente'));",
+                  "pm.test('Recordatorio leído', () => pm.expect(c.mensajes.find(m => m.proposito === 'recordatorio_24h').estado).to.eql('leido'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "23 · Notificaciones · Fallas, avisos y cambios del equipo",
+      "description": "E2E-NOT-04 y RF-BAR-14. Con el WhatsApp caído (celular terminado en `0000`) la cita se crea igual; el mensaje se reintenta a 1, 2, 4 y 8 minutos (aquí se adelanta el reloj) y al quinto intento la administradora ve un aviso. Después, una incapacidad de Felipe deja su cita por fuera: aviso, reasignación a Daniel y WhatsApp para que el cliente elija otra hora si prefiere.",
+      "item": [
+        {
+          "name": "Horas de Felipe el día de la cita",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/disponibilidad/horas?servicio_id={{servicio_corte_id}}&barbero_id={{barbero4_id}}&fecha={{dia_cita}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const horas = ['manana', 'tarde', 'noche'].flatMap(f => pm.response.json()[f]).map(h => h.inicio);",
+                  "const daniel = JSON.parse(pm.collectionVariables.get('horas_daniel') || '[]');",
+                  "const ocupada = pm.collectionVariables.get('inicio_recordatorio');",
+                  "const comun = horas.find(h => daniel.includes(h) && h !== ocupada);",
+                  "pm.test('Hay una hora libre para Felipe y para Daniel', () => pm.expect(comun).to.be.a('string'));",
+                  "pm.collectionVariables.set('inicio_falla', comun);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cita para un celular sin WhatsApp (…0000)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_nuevo\": {\n    \"nombre\": \"Carlos Mejía\",\n    \"celular\": \"{{celular_falla}}\"\n  },\n  \"servicio_id\": {{servicio_corte_id}},\n  \"barbero_id\": {{barbero4_id}},\n  \"inicio\": \"{{inicio_falla}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "La cita se guarda aunque el WhatsApp no salga (RNF-DIS-03)."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('cita_falla_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker → primer intento falla",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('t0_falla', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reloj +1,5 min (2.º intento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ahora\": \"{{reloj_falla}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t0 = Number(pm.collectionVariables.get('t0_falla'));",
+                  "pm.collectionVariables.set('reloj_falla', new Date(t0 + 1.5 * 60000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (2.º intento)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reloj +4 min (3.er intento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ahora\": \"{{reloj_falla}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t0 = Number(pm.collectionVariables.get('t0_falla'));",
+                  "pm.collectionVariables.set('reloj_falla', new Date(t0 + 4 * 60000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (3.er intento)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reloj +8,5 min (4.º intento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ahora\": \"{{reloj_falla}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t0 = Number(pm.collectionVariables.get('t0_falla'));",
+                  "pm.collectionVariables.set('reloj_falla', new Date(t0 + 8.5 * 60000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (4.º intento)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reloj +17 min (5.º intento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ahora\": \"{{reloj_falla}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t0 = Number(pm.collectionVariables.get('t0_falla'));",
+                  "pm.collectionVariables.set('reloj_falla', new Date(t0 + 17 * 60000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ejecutar el worker (5.º intento: se rinde)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/trabajos/ejecutar",
+            "description": "Una pasada del worker (webhooks, trabajos, WhatsApp y correos) con el reloj de la API."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin errores', () => pm.expect(pm.response.json().errores).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registro de mensajes: fallido tras 5 intentos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/mensajes?destinatario={{celular_falla}}",
+            "description": "RF-NOT-07: el registro no expone las variables (pueden traer enlaces secretos)."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json().datos.find(m => m.plantilla === 'cita_confirmada');",
+                  "pm.test('Fallido con 5 intentos', () => pm.expect([m.estado, m.intentos]).to.eql(['fallido', 5]));",
+                  "pm.test('Sin variables', () => pm.expect(m).to.not.have.property('variables'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La administradora ve el aviso (E2E-NOT-04)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/avisos?no_leidos=true&por_pagina=50"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const aviso = pm.response.json().datos.find(a => a.tipo === 'mensaje_fallido' && a.datos.destinatario === pm.collectionVariables.get('celular_falla'));",
+                  "pm.test('Aviso de mensaje fallido', () => pm.expect(aviso.titulo).to.include('Carlos'));",
+                  "if (aviso) pm.collectionVariables.set('aviso_id', aviso.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Marcar el aviso como leído",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/avisos/{{aviso_id}}/leido"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Leído', () => pm.expect(pm.response.json().leido_en).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Volver a la hora real",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/api/v1/_pruebas/reloj"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Hora real', () => pm.expect(Math.abs(Date.parse(pm.response.json().ahora) - Date.now())).to.be.below(60000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Incapacidad de Felipe el día de la cita",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/barberos/{{barbero4_id}}/ausencias",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo\": \"incapacidad\",\n  \"desde\": \"{{dia_cita}}\",\n  \"hasta\": \"{{dia_cita}}\",\n  \"observacion\": \"Incapacidad médica\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Aviso: 1 cita afectada por la ausencia (RF-BAR-14)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/avisos?no_leidos=true&por_pagina=50"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const aviso = pm.response.json().datos.find(a => a.tipo === 'ausencia_con_citas' && a.datos.barbero_id === Number(pm.collectionVariables.get('barbero4_id')));",
+                  "pm.test('Incluye la cita de Carlos', () => pm.expect(aviso.datos.cita_ids).to.include(Number(pm.collectionVariables.get('cita_falla_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reasignar la cita a Daniel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/reasignacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cita_ids\": [\n    {{cita_falla_id}}\n  ],\n  \"barbero_destino_id\": {{barbero3_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Ahora con Daniel', () => pm.expect(pm.response.json()[0].barbero.id).to.eql(Number(pm.collectionVariables.get('barbero3_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pedirle que elija otra hora si prefiere",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas/aviso-reprogramacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cita_ids\": [\n    {{cita_falla_id}}\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Un aviso', () => pm.expect(pm.response.json().avisadas).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "24 · Ventas · Registro",
+      "description": "RF-VEN-01 a 09. El servidor recalcula todo: subtotal con el precio vigente, descuento con motivo, propina libre (100 % del barbero), total y comisión. Los pagos deben sumar exactamente el total. Con `cita_id`, la cita queda «Atendida» (las peticiones con cita se saltan si Daniel ya no tiene horas hoy).",
+      "item": [
+        {
+          "name": "Catálogos de la venta",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/catalogos"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "const metodo = codigo => (c.metodos_pago.find(m => m.codigo === codigo) || {}).id;",
+                  "pm.collectionVariables.set('metodo_efectivo', metodo('efectivo'));",
+                  "pm.collectionVariables.set('metodo_nequi', metodo('nequi'));",
+                  "pm.collectionVariables.set('descuento_10', c.descuentos.find(d => d.nombre === '10 %').id);",
+                  "pm.collectionVariables.set('motivo_1', c.motivos_descuento[0].id);",
+                  "pm.test('Propinas rápidas', () => pm.expect(c.propinas_rapidas).to.eql([2000, 5000, 10000]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Horas de Daniel hoy (vista del personal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/disponibilidad/horas?servicio_id={{servicio_corte_id}}&barbero_id={{barbero3_id}}&fecha={{hoy}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const bogota = new Date(Date.now() - 5 * 3600000);",
+                  "pm.collectionVariables.set('hoy', bogota.toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const horas = ['manana', 'tarde', 'noche'].flatMap(f => pm.response.json()[f]).map(h => h.inicio);",
+                  "pm.collectionVariables.set('inicio_hoy_venta', horas.length ? horas[0] : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cita de hoy para Pablo (se salta si no hay horas)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_nuevo\": {\n    \"nombre\": \"Pablo Vélez\",\n    \"celular\": \"{{celular_venta}}\"\n  },\n  \"servicio_id\": {{servicio_corte_id}},\n  \"barbero_id\": {{barbero3_id}},\n  \"inicio\": \"{{inicio_hoy_venta}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('inicio_hoy_venta')) pm.execution.skipRequest();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('cita_venta_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cobrar la cita: corte, 10 %, propina y Nequi (E2E-VEN-01)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cita_id\": {{cita_venta_id}},\n  \"servicio_ids\": [\n    {{servicio_corte_id}}\n  ],\n  \"descuento\": {\n    \"descuento_id\": {{descuento_10}},\n    \"motivo_descuento_id\": {{motivo_1}}\n  },\n  \"propina\": 3500,\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_nequi}},\n      \"monto\": {{monto_cita}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('inicio_hoy_venta')) pm.execution.skipRequest();",
+                  "pm.collectionVariables.set('monto_cita', 38000 - 3800 + 3500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.test('La cita queda cobrada', () => pm.expect(pm.response.json().cita_id).to.eql(Number(pm.collectionVariables.get('cita_venta_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pagos que no cuadran → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": {\n    \"tipo\": \"ocasional\"\n  },\n  \"barbero_id\": {{barbero3_id}},\n  \"servicio_ids\": [\n    {{servicio_corte_id}}\n  ],\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_efectivo}},\n      \"monto\": 1000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en pagos', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"pagos\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Venta a un cliente nuevo: 10 %, propina y Nequi (E2E-VEN-02)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": {\n    \"tipo\": \"nuevo\",\n    \"nombre\": \"Valeria Ortiz\",\n    \"celular\": \"{{celular_venta2}}\",\n    \"correo\": null\n  },\n  \"barbero_id\": {{barbero3_id}},\n  \"servicio_ids\": [\n    {{servicio_corte_id}}\n  ],\n  \"descuento\": {\n    \"descuento_id\": {{descuento_10}},\n    \"motivo_descuento_id\": {{motivo_1}}\n  },\n  \"propina\": 3500,\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_nequi}},\n      \"monto\": {{monto_venta}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Corte $38.000 (precio cambiado en la carpeta 10) − 10 % = $34.200 de venta neta; + $3.500 de propina = $37.700."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('monto_venta', 38000 - 3800 + 3500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "const v = pm.response.json();",
+                  "pm.test('Totales', () => pm.expect([v.subtotal, v.descuento.valor, v.venta_neta, v.total_cobrado]).to.eql([38000, 3800, 34200, 37700]));",
+                  "pm.test('Comisión = venta neta × porcentaje', () => pm.expect(v.comision_barbero).to.eql(Math.round(v.venta_neta * v.porcentaje_comision / 100)));",
+                  "pm.test('Cliente creado', () => pm.expect(v.cliente.nombre).to.eql('Valeria Ortiz'));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('venta_id', v.id);",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('cliente_venta2_id', v.cliente.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Venta a un cliente ocasional",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": {\n    \"tipo\": \"ocasional\"\n  },\n  \"barbero_id\": {{barbero3_id}},\n  \"servicio_ids\": [\n    {{servicio_corte_id}}\n  ],\n  \"propina\": 2000,\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_efectivo}},\n      \"monto\": 40000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Sin cliente', () => pm.expect(pm.response.json().cliente).to.be.null);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Servicio que el barbero no hace → 422 (E2E-VEN-03)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"barbero_id\": {{barbero3_id}},\n  \"servicio_ids\": [\n    {{servicio_cejas_id}}\n  ],\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_efectivo}},\n      \"monto\": 10000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Código «validacion»', () => pm.expect(pm.response.json().codigo).to.eql('validacion'));",
+                  "pm.test('Errores en servicio_ids', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  [\"servicio_ids\"].forEach(c => pm.expect(campos).to.include(c));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ficha: suma la visita y el gasto (E2E-CLI-02)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/{{cliente_venta2_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const f = pm.response.json();",
+                  "pm.test('Una visita de $34.200', () => pm.expect([f.visitas, f.total_gastado, f.ticket_promedio]).to.eql([1, 34200, 34200]));",
+                  "pm.test('Barbero habitual: Daniel', () => pm.expect(f.barbero_habitual_id).to.eql(Number(pm.collectionVariables.get('barbero3_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Historial de ventas del cliente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas?cliente_id={{cliente_venta2_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Una venta', () => pm.expect(pm.response.json().total).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "25 · Barbero · Mis citas y mis ventas",
+      "description": "RF-PBA-01, 03 a 05 y E2E-VEN-04. Esteban entra a su panel: registra ventas solo a su nombre, ve únicamente los descuentos permitidos a barberos, no puede anular y «Lo que llevas hoy» suma comisión y propinas. Usa un inicio de sesión (por eso hay que reiniciar la API antes de la carpeta 21).",
+      "item": [
+        {
+          "name": "Registrar a Esteban con acceso al panel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/barberos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_documento\": \"CC\",\n  \"numero_documento\": \"{{documento_barbero5}}\",\n  \"nombres\": \"Esteban\",\n  \"apellidos\": \"Rojas Peña\",\n  \"fecha_nacimiento\": \"1996-02-20\",\n  \"celular\": \"312 555 0505\",\n  \"correo\": \"{{correo_barbero5}}\",\n  \"especialidad\": \"Barba y cortes\",\n  \"anios_experiencia\": 3,\n  \"fecha_ingreso\": \"2025-08-01\",\n  \"tipo_vinculacion\": \"prestacion_servicios\",\n  \"periodo_liquidacion\": \"quincenal\",\n  \"servicios\": [\n    {{servicio_corte_id}}\n  ],\n  \"horario\": [\n    {\n      \"dia_semana\": 1,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    },\n    {\n      \"dia_semana\": 2,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    },\n    {\n      \"dia_semana\": 3,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    },\n    {\n      \"dia_semana\": 4,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    },\n    {\n      \"dia_semana\": 5,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    },\n    {\n      \"dia_semana\": 6,\n      \"inicio\": \"09:00\",\n      \"fin\": \"19:00\"\n    }\n  ],\n  \"visibilidad\": {\n    \"mostrar_en_landing\": true,\n    \"recibe_citas_en_linea\": true,\n    \"acceso_panel\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const s = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('correo_barbero5', `esteban.${s}@diamante.co`);",
+                  "pm.collectionVariables.set('documento_barbero5', `30${s}5`);",
+                  "pm.collectionVariables.set('correo_solicitado_en', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('barbero5_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mailpit · Invitación de Esteban",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mailpit_url}}/api/v1/message/latest"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const desde = Number(pm.collectionVariables.get('correo_solicitado_en') || 0);",
+                  "const url = pm.collectionVariables.get('mailpit_url') + '/api/v1/messages?limit=1';",
+                  "function intentar(restantes) {",
+                  "  pm.sendRequest(url, (error, respuesta) => {",
+                  "    const ultimo = !error && respuesta.code === 200 && respuesta.json().messages[0];",
+                  "    if (ultimo && Date.parse(ultimo.Created) > desde) return;",
+                  "    if (restantes > 0) setTimeout(() => intentar(restantes - 1), 1000);",
+                  "  });",
+                  "}",
+                  "intentar(15);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hay un correo en Mailpit', () => pm.response.to.have.status(200));",
+                  "const correo = pm.response.json();",
+                  "pm.test('Es para Esteban', () => pm.expect(correo.To[0].Address.toLowerCase()).to.eql(pm.collectionVariables.get('correo_barbero5').toLowerCase()));",
+                  "const m = (correo.Text || '').match(/#token=([A-Za-z0-9_-]+)/);",
+                  "if (m) pm.collectionVariables.set('token_enlace', m[1]);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban activa su cuenta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/activacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{token_enlace}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban inicia sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auth/sesion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"correo\": \"{{correo_barbero5}}\",\n  \"contrasena\": \"{{clave_admin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const m = (pm.response.headers.get('Set-Cookie') || '').match(/__Host-sesion=([^;]+)/);",
+                  "if (m) pm.collectionVariables.set('sesion_esteban', m[1]);",
+                  "pm.test('Panel del barbero', () => pm.expect(pm.response.json().panel).to.eql('/barbero'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mis citas: solo las suyas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/citas"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Todas de Esteban', () => pm.response.json().forEach(c => pm.expect(c.barbero.id).to.eql(Number(pm.collectionVariables.get('barbero5_id')))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Catálogos: solo descuentos permitidos a barberos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/catalogos"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Permitidos', () => pm.response.json().descuentos.forEach(d => pm.expect(d.permitido_a_barberos).to.be.true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registra una venta: queda a su nombre aunque pida otro barbero",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": {\n    \"tipo\": \"ocasional\"\n  },\n  \"barbero_id\": {{barbero3_id}},\n  \"servicio_ids\": [\n    {{servicio_corte_id}}\n  ],\n  \"propina\": 5000,\n  \"pagos\": [\n    {\n      \"metodo_pago_id\": {{metodo_efectivo}},\n      \"monto\": 43000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.test('A nombre de Esteban', () => pm.expect(pm.response.json().barbero.id).to.eql(Number(pm.collectionVariables.get('barbero5_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No puede anular → 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/{{venta_id}}/anulacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Me equivoqué de servicio\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Una venta ajena no existe para él → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/{{venta_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "«Lo que llevas hoy»",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/resumen-barbero"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Comisión + propinas', () => pm.expect(r.total_a_recibir).to.eql(r.comision + r.propinas));",
+                  "pm.test('Propina de $5.000', () => pm.expect(r.propinas).to.eql(5000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La caja del día → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/caja"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "26 · Ventas · Caja, anulación y cierre",
+      "description": "RF-VEN-10 a 12 y RF-CFG-07. La caja no suma las anuladas; la anulación queda en la auditoría y corrige la ficha del cliente. El cierre guarda lo esperado por método (propinas incluidas) y lo contado; uno por día (si ya cerró hoy en un recorrido anterior, el primer cierre responde 409).",
+      "item": [
+        {
+          "name": "Caja del día",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/caja"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json();",
+                  "pm.test('Total = neta + propinas', () => pm.expect(c.total_cobrado).to.eql(c.venta_neta + c.propinas));",
+                  "pm.test('Desglose por método', () => pm.expect(c.por_metodo.reduce((s, m) => s + m.total, 0)).to.eql(c.total_cobrado));",
+                  "pm.collectionVariables.set('ventas_antes', c.numero_ventas);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Anular la venta de Valeria (E2E-VEN-05)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/{{venta_id}}/anulacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Se registró dos veces por error\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Anulada, conserva el ticket', () => pm.expect(pm.response.json().estado).to.eql('anulada'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Anularla otra vez → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/{{venta_id}}/anulacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Otra vez por error\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «estado_invalido»', () => pm.expect(pm.response.json().codigo).to.eql('estado_invalido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La caja ya no la cuenta",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/caja"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Una venta menos', () => pm.expect(pm.response.json().numero_ventas).to.eql(Number(pm.collectionVariables.get('ventas_antes')) - 1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La ficha descuenta la visita",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/{{cliente_venta2_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Sin visitas', () => pm.expect([pm.response.json().visitas, pm.response.json().total_gastado]).to.eql([0, 0]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La anulación en la auditoría",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?entidad=venta&entidad_id={{venta_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('anular_venta', () => pm.expect(pm.response.json().datos.map(d => d.accion)).to.include('anular_venta'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cierre de caja de hoy (E2E-VEN-06)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/cierres",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{hoy}}\",\n  \"contado\": [\n    {\n      \"metodo_pago_id\": {{metodo_efectivo}},\n      \"monto\": 100000\n    },\n    {\n      \"metodo_pago_id\": {{metodo_nequi}},\n      \"monto\": 0\n    }\n  ],\n  \"observacion\": \"Conteo de prueba\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cerrado (o ya cerrado hoy)', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+                  "if (pm.response.code === 201) pm.test('Diferencia = contado − esperado', () => {",
+                  "  const c = pm.response.json();",
+                  "  pm.expect(c.diferencia).to.eql(c.total_contado - c.total_esperado);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Un segundo cierre del mismo día → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/cierres",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fecha\": \"{{hoy}}\",\n  \"contado\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «cierre_existente»', () => pm.expect(pm.response.json().codigo).to.eql('cierre_existente'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar el cierre",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/cierres?fecha={{hoy}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Con lo esperado por método', () => pm.expect(pm.response.json().metodos).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Métodos de pago (todos)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/metodos-pago"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const link = pm.response.json().find(m => m.codigo === 'link_pago');",
+                  "pm.test('Incluye «Link de pago»', () => pm.expect(link).to.be.an('object'));",
+                  "if (link) pm.collectionVariables.set('metodo_link', link.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Habilitar «Link de pago»",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/metodos-pago/{{metodo_link}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Activo', () => pm.expect(pm.response.json().activo).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Volver a deshabilitarlo",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/metodos-pago/{{metodo_link}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"activo\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Inactivo', () => pm.expect(pm.response.json().activo).to.be.false);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "27 · Clientes · Búsqueda y derechos del titular",
+      "description": "E2E-CLI-01 y 04, RNF-LEG-03. La búsqueda encuentra por un fragmento del celular aunque tenga espacios. La anonimización borra los datos personales y conserva las cifras; con citas por atender se rechaza. Las solicitudes del titular llevan su plazo legal (10 días hábiles las consultas, 15 los reclamos).",
+      "item": [
+        {
+          "name": "Búsqueda por fragmento del celular con espacios (E2E-CLI-01)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/buscar?q={{q_celular}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const c = pm.collectionVariables.get('celular_venta2');",
+                  "pm.collectionVariables.set('q_celular', encodeURIComponent(c.slice(3, 6) + ' ' + c.slice(6, 8)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Encuentra a Valeria', () => pm.expect(pm.response.json().map(c => c.id)).to.include(Number(pm.collectionVariables.get('cliente_venta2_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar su solicitud de supresión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/solicitudes-titular",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_id\": {{cliente_venta2_id}},\n  \"tipo\": \"supresion\",\n  \"descripcion\": \"Pidió por correo borrar sus datos personales.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Con plazo legal', () => pm.expect(pm.response.json().responder_antes_de).to.be.a('string'));",
+                  "if (pm.response.code < 300) pm.collectionVariables.set('solicitud_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Con citas por atender no se anonimiza → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/{{cliente_recordatorio_id}}/anonimizacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Solicitud de supresión del titular\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Ana (carpeta 21) tiene una cita confirmada."
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «estado_invalido»', () => pm.expect(pm.response.json().codigo).to.eql('estado_invalido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Anonimizar a Valeria (E2E-CLI-04)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/{{cliente_venta2_id}}/anonimizacion",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Solicitud de supresión del titular\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ya no aparece en la búsqueda",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/buscar?q={{q_celular}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No está', () => pm.expect(pm.response.json().map(c => c.id)).to.not.include(Number(pm.collectionVariables.get('cliente_venta2_id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Su ficha ya no existe → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/{{cliente_venta2_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sus ventas conservan las cifras",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas?cliente_id={{cliente_venta2_id}}&incluir_anuladas=true"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Cliente anonimizado', () => pm.expect(pm.response.json().datos[0].cliente.nombre).to.eql('Cliente anonimizado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Responder la solicitud",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/solicitudes-titular/{{solicitud_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"respuesta\": \"Datos suprimidos; se conservan las cifras sin datos personales.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Respondida', () => pm.expect(pm.response.json().respondida_en).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Responderla otra vez → 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/solicitudes-titular/{{solicitud_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"respuesta\": \"Otra respuesta\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Código «estado_invalido»', () => pm.expect(pm.response.json().codigo).to.eql('estado_invalido'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Solicitudes abiertas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/solicitudes-titular?abiertas=true"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No incluye la respondida', () => pm.expect(pm.response.json().datos.map(s => s.id)).to.not.include(Number(pm.collectionVariables.get('solicitud_id'))));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "28 · Bloqueo y límites de intentos (al final: deja la cuenta bloqueada)",
+      "description": "**Ejecútela al final.** Si viene de la carpeta 27 sin reiniciar, el límite por IP alcanza para sus siete intentos (la carpeta 21 pidió reiniciar la API).\n\n- **Bloqueo de cuenta** (RNF-SEG-05): 5 contraseñas equivocadas seguidas bloquean la cuenta 15 minutos. Desde ahí ni la contraseña correcta funciona y el mensaje sigue siendo genérico; la auditoría registra `bloquear_cuenta`.\n- **Límite por IP**: el inicio de sesión número 11 en 15 minutos responde 429 con `Retry-After`.\n\nPara desbloquear la cuenta sin esperar:\n\n```sql\nUPDATE identidad.usuario SET bloqueado_hasta = NULL, intentos_fallidos = 0\nWHERE correo = 'laura@diamante.co';\n```",
       "item": [
         {
           "name": "Contraseña equivocada 1/5",
@@ -8324,6 +11243,150 @@
     },
     {
       "key": "cliente4_id",
+      "value": ""
+    },
+    {
+      "key": "secreto_whatsapp",
+      "value": "secreto-de-desarrollo-whatsapp"
+    },
+    {
+      "key": "token_webhook",
+      "value": "token-de-desarrollo"
+    },
+    {
+      "key": "celular_recordatorio",
+      "value": ""
+    },
+    {
+      "key": "celular_falla",
+      "value": ""
+    },
+    {
+      "key": "celular_venta",
+      "value": ""
+    },
+    {
+      "key": "celular_venta2",
+      "value": ""
+    },
+    {
+      "key": "inicio_recordatorio",
+      "value": ""
+    },
+    {
+      "key": "reloj_recordatorio",
+      "value": ""
+    },
+    {
+      "key": "horas_daniel",
+      "value": ""
+    },
+    {
+      "key": "cita_recordatorio_id",
+      "value": ""
+    },
+    {
+      "key": "cliente_recordatorio_id",
+      "value": ""
+    },
+    {
+      "key": "wamid_recordatorio",
+      "value": ""
+    },
+    {
+      "key": "inicio_falla",
+      "value": ""
+    },
+    {
+      "key": "cita_falla_id",
+      "value": ""
+    },
+    {
+      "key": "t0_falla",
+      "value": ""
+    },
+    {
+      "key": "reloj_falla",
+      "value": ""
+    },
+    {
+      "key": "recordatorios_antes",
+      "value": ""
+    },
+    {
+      "key": "aviso_id",
+      "value": ""
+    },
+    {
+      "key": "metodo_efectivo",
+      "value": ""
+    },
+    {
+      "key": "metodo_nequi",
+      "value": ""
+    },
+    {
+      "key": "metodo_link",
+      "value": ""
+    },
+    {
+      "key": "descuento_10",
+      "value": ""
+    },
+    {
+      "key": "motivo_1",
+      "value": ""
+    },
+    {
+      "key": "inicio_hoy_venta",
+      "value": ""
+    },
+    {
+      "key": "cita_venta_id",
+      "value": ""
+    },
+    {
+      "key": "monto_cita",
+      "value": ""
+    },
+    {
+      "key": "monto_venta",
+      "value": ""
+    },
+    {
+      "key": "venta_id",
+      "value": ""
+    },
+    {
+      "key": "cliente_venta2_id",
+      "value": ""
+    },
+    {
+      "key": "correo_barbero5",
+      "value": ""
+    },
+    {
+      "key": "documento_barbero5",
+      "value": ""
+    },
+    {
+      "key": "barbero5_id",
+      "value": ""
+    },
+    {
+      "key": "sesion_esteban",
+      "value": ""
+    },
+    {
+      "key": "ventas_antes",
+      "value": ""
+    },
+    {
+      "key": "q_celular",
+      "value": ""
+    },
+    {
+      "key": "solicitud_id",
       "value": ""
     }
   ]

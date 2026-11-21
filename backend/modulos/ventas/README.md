@@ -1,17 +1,59 @@
 # Módulo `ventas`
 
-Ventas, pagos, descuentos, caja del día y cierres de caja.
+Ventas, pagos, descuentos, caja del día y cierres de caja (RF-VEN-01 a 13, RF-PBA-03 a 05,
+RF-CFG-07).
 
 | | |
 |---|---|
-| Fase del plan | 5 |
-| Esquema de base de datos | `ventas` (ver `migraciones/`) |
-| Estado | Esqueleto: solo migraciones. Se implementa en la fase 5. |
+| Fase del plan | 5 ✅ |
+| Esquema de base de datos | `ventas` (ver `migraciones/`); vista publicada `v_venta` para reportes |
+| Fachadas que usa | `agenda` (`CitasParaVentas`: la cita que se cobra, bloqueada), `barberos` (`EquipoVentas`: estado en la fecha, servicios y comisión), `catalogo` (precios vigentes), `clientes` (cliente nuevo) y `auditoria` |
+
+## Endpoints (`/api/v1`)
+
+| Método | Ruta | Acceso | Notas |
+|---|---|---|---|
+| GET | `/ventas/catalogos` | Personal | Métodos activos, descuentos (el barbero solo los permitidos a barberos), motivos y propinas rápidas |
+| POST | `/ventas` | Personal | Ver «Registrar» abajo. `201` con la venta |
+| GET | `/ventas?fecha=&desde=&hasta=&barbero_id=&cliente_id=&incluir_anuladas=&pagina=` | Personal | Sin fechas ni cliente: las de hoy. El barbero solo ve las suyas |
+| GET | `/ventas/{id}` | Personal | Lo ajeno no existe para el barbero (404) |
+| POST | `/ventas/{id}/anulacion` | Administrador | `{ motivo }` (5 a 300 caracteres). Conserva el número de ticket; auditada |
+| GET | `/ventas/caja?fecha=&barbero_id=` | Administrador | Totales sin anuladas, desglose por método (propinas incluidas) y ventas del día |
+| GET | `/ventas/resumen-barbero?fecha=&barbero_id=` | Barbero (el suyo); administrador con `barbero_id` | «Lo que llevas hoy»: comisión + propinas |
+| GET / POST | `/ventas/cierres` (`?fecha=` al consultar) | Administrador | `{ fecha, contado: [{ metodo_pago_id, monto }], observacion }`; uno por día (`409 cierre_existente`) |
+| GET | `/ventas/metodos-pago` | Administrador | Todos, activos o no |
+| PATCH | `/ventas/metodos-pago/{id}` | Administrador | `{ activo }`; siempre queda al menos uno activo; auditado |
+
+## Registrar una venta
+
+```json
+{ "cita_id": 1842, "cliente": { "tipo": "registrado", "id": 57 }, "barbero_id": 1,
+  "servicio_ids": [3, 5], "descuento": { "descuento_id": 1, "motivo_descuento_id": 1 },
+  "propina": 5000, "pagos": [{ "metodo_pago_id": 2, "monto": 65300 }] }
+```
+
+- `cliente`: `{ "tipo": "registrado", "id" }`, `{ "tipo": "nuevo", "nombre", "celular", "correo" }`
+  (se crea; `409 celular_en_uso` si existe) u `{ "tipo": "ocasional" }` (no suma a ningún historial).
+  Con `cita_id`, el cliente es el de la cita.
+- **Barbero**: activo en la fecha y que ofrezca todos los servicios (RN-05). Si registra un
+  barbero, queda a su nombre aunque pida otro (RF-PBA-04).
+- **Cita**: de hoy o anterior, por atender; una cita atendida responde `409 cita_ya_cobrada`.
+  La cita queda «Atendida» en la misma transacción (RF-VEN-09).
+- **Totales** (los calcula el servidor): subtotal con el precio vigente, descuento con motivo
+  (nunca mayor que el subtotal; el barbero solo los permitidos), venta neta, propina libre (100 %
+  del barbero, no paga comisión), total y comisión con el porcentaje vigente del barbero, que se
+  copia en la venta (RN-12 a 15, RNF-INT-05).
+- **Pagos**: métodos activos y distintos; la suma debe ser exactamente el total (admite dos
+  métodos, RF-VEN-13). La base vuelve a verificar el cuadre al confirmar (triggers diferidos).
+- **Ticket**: consecutivo sin huecos con el contador bloqueado en la transacción (RN-19).
 
 ## Eventos que publica (crate `contratos`)
 
-- `VentaRegistrada`
-- `VentaAnulada`
+- `VentaRegistrada`: `agenda` deja la cita «Atendida»; `clientes` suma visita, gasto, última
+  visita y barbero habitual.
+- `VentaAnulada`: `clientes` resta la visita y el gasto y recalcula la última visita con las
+  ventas vigentes (las calcula este módulo y van en el evento). La cita sigue «Atendida»: el
+  servicio se prestó; si hay que volver a cobrar, se registra una venta sin cita.
 
 ## Eventos que consume
 
@@ -19,6 +61,12 @@ Ventas, pagos, descuentos, caja del día y cierres de caja.
 
 ## Estructura
 
-Al implementarlo se sigue la plantilla del módulo de referencia [`negocio`](../negocio/README.md):
-`dominio/`, `aplicacion/`, `infraestructura/`, `http/`, `api.rs` (fachada pública), `modulo.rs`
-(construcción) y `tests/`. Solo `api`, `modulo` y `MIGRACIONES` son públicos.
+```text
+ventas/src/
+├── api.rs                 # DTO y ErrorVentas
+├── modulo.rs              # DependenciasVentas y rutas()
+├── dominio/               # totales, descuentos, comisión y cuadre de pagos (con pruebas)
+├── aplicacion/            # ventas (registrar, listar, detalle, anular) y caja (caja, resumen, cierres, métodos)
+├── infraestructura/       # RepositorioVentasPg
+└── http/                  # rutas del panel
+```

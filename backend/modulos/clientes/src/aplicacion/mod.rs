@@ -5,6 +5,7 @@ pub(crate) mod dto;
 pub(crate) mod errores;
 mod fachada;
 pub(crate) mod puertos;
+pub(crate) mod titular;
 
 use std::sync::Arc;
 
@@ -24,6 +25,7 @@ pub(crate) struct CasosDeUso<C: Send> {
     pub(crate) ficha: FichaCliente<C>,
     pub(crate) crear: CrearCliente<C>,
     pub(crate) editar: EditarCliente<C>,
+    pub(crate) titular: titular::Titular<C>,
     pub(crate) fachada: Arc<FachadaClientes<C>>,
 }
 
@@ -36,6 +38,7 @@ impl<C: Send> CasosDeUso<C> {
             ficha: FichaCliente { p: p.clone() },
             crear: CrearCliente { p: p.clone() },
             editar: EditarCliente { p: p.clone() },
+            titular: titular::Titular { p: p.clone() },
             fachada: Arc::new(FachadaClientes { p }),
         }
     }

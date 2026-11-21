@@ -37,7 +37,7 @@ npx playwright test --project=movil-chrome   # o sin filtro para todos
 
 `docker-compose.e2e.yml` cambia, respecto a producción:
 
-- La API se compila con la *feature* `pruebas-e2e` (endpoints `/_pruebas/*`) y `WHATSAPP_MODO=simulado`.
+- La API arranca con `DIAMANTE_PRUEBAS_E2E=true` (endpoints `/_pruebas/*`; prohibido en producción) y ejecuta también las tareas del worker (`DIAMANTE_WORKER_EN_API=true`), para que todo el sistema comparta el reloj de pruebas. El WhatsApp es el simulado (siempre fuera de producción): los celulares terminados en `0000` fallan temporalmente y los terminados en `9999` de forma permanente (E2E-NOT-04). Los webhooks se firman con `DIAMANTE_WHATSAPP_SECRETO_APP=secreto-de-pruebas-whatsapp`.
 - PostgreSQL usa `tmpfs`: la base de datos vive en memoria y es rápida y desechable.
 - Se agrega Mailpit como servidor SMTP.
 - La caché de la landing dura 2 segundos, en lugar de 60, para probar RF-PUB-04 sin esperas largas.

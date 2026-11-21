@@ -153,12 +153,28 @@ pub struct EventoCitaDto {
     pub detalle: Option<String>,
 }
 
+/// Mensaje de WhatsApp relacionado con la cita y su estado de entrega (RF-NOT-07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MensajeCitaDto {
+    /// `confirmacion`, `recordatorio_24h`, `recordatorio_2h`, `recordatorio_manual`,
+    /// `reprogramacion`, `cancelacion` o `aviso_reprogramacion`.
+    pub proposito: String,
+    pub plantilla: String,
+    /// `pendiente`, `enviado`, `entregado`, `leido`, `fallido` o `cancelado`.
+    pub estado: String,
+    pub intentos: i16,
+    pub ultimo_error: Option<String>,
+    pub creado_en: DateTime<FixedOffset>,
+    pub enviado_en: Option<DateTime<FixedOffset>>,
+}
+
 /// Detalle para el personal (RF-AGE-04).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetalleCitaDto {
     #[serde(flatten)]
     pub cita: CitaDto,
     pub historial: Vec<EventoCitaDto>,
+    pub mensajes: Vec<MensajeCitaDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

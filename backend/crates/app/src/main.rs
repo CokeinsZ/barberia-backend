@@ -2,7 +2,8 @@
 //!
 //! - `diamante migrar`: aplica las migraciones de todos los módulos y termina.
 //! - `diamante api`: servidor HTTP.
-//! - `diamante worker`: tareas en segundo plano (envío de correos).
+//! - `diamante worker`: tareas en segundo plano (correos, WhatsApp, webhooks, recordatorios y
+//!   mantenimiento).
 //! - `diamante salud`: verificación de salud para Docker (sin `curl` en la imagen).
 //! - `diamante crear-administrador <correo> <nombre>`: invita al primer administrador de una
 //!   instalación nueva y muestra el enlace de activación.
@@ -12,8 +13,10 @@ mod administracion;
 mod composicion;
 mod enrutador;
 mod migraciones;
+mod pruebas_e2e;
 mod salud;
 mod senales;
+mod tareas;
 mod worker;
 
 #[cfg(test)]
@@ -73,6 +76,12 @@ async fn main() -> ExitCode {
 async fn api(configuracion: &Configuracion) -> Result<(), ErrorDeArranque> {
     let composicion = composicion::Composicion::construir(configuracion).await?;
     let aplicacion = enrutador::construir(&composicion);
+    if configuracion.worker_en_api {
+        // Ambiente E2E: las tareas del worker corren aquí, con el mismo reloj de la API.
+        worker::informar_canales(&composicion);
+        tracing::info!("la API también ejecuta las tareas del worker (DIAMANTE_WORKER_EN_API)");
+        tokio::spawn(worker::bucle(composicion.clone(), std::future::pending()));
+    }
     let escucha = tokio::net::TcpListener::bind(configuracion.direccion_http).await?;
     tracing::info!(direccion = %configuracion.direccion_http, entorno = ?configuracion.entorno, "API escuchando");
     // La IP de la conexión alimenta los límites de intentos (o `X-Forwarded-For` tras Caddy).

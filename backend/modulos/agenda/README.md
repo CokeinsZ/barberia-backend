@@ -5,9 +5,10 @@ tablero del panel y la landing pública (RF-PUB, RF-RES, RF-AGE, RF-CFG-02).
 
 | | |
 |---|---|
-| Fase del plan | 3 ✅ · 4 (recordatorios y respuestas por WhatsApp) · 5 (cita «Atendida» al cobrar) |
+| Fase del plan | 3 ✅ · 4 (recordatorios, botones de WhatsApp y avisos) ✅ · 5 (cita «Atendida» al cobrar) ✅ |
 | Esquema de base de datos | `agenda` (ver `migraciones/`); `cita_sin_solape` (EXCLUDE) garantiza que dos citas vigentes de un barbero nunca se cruzan (RNF-INT-01) |
-| Fachadas que usa | `negocio` (datos públicos y calendario), `catalogo` (servicios), `barberos` (`EquipoAgenda`: franjas, ausencias, bloqueos y retiro), `clientes`, `verificacion` (comprobantes) y `notificaciones` (WhatsApp en cola) |
+| Fachadas que usa | `negocio` (datos públicos y calendario), `catalogo` (servicios), `barberos` (`EquipoAgenda`: franjas, ausencias, bloqueos y retiro), `clientes`, `verificacion` (comprobantes) y `notificaciones` (WhatsApp, avisos y estado de mensajes) |
+| Fachadas que ofrece | `CitasParaVentas` (la cita que se cobra, bloqueada) y `CitasDeClientes` (citas por atender de un cliente, para `clientes` por un adaptador en `app`) |
 
 ## Motor de disponibilidad (`dominio/disponibilidad.rs`)
 
@@ -48,12 +49,15 @@ Funciones puras, probadas sin base de datos:
 | GET | `/agenda/tablero?fecha=` | Administrador | Columna por barbero: estado del día, franjas, bloqueos y citas |
 | GET | `/agenda/citas?desde=&hasta=&barbero_id=&estado=` | Personal | El barbero solo ve las suyas |
 | POST | `/agenda/citas` | Administrador | `cliente_id` o `cliente_nuevo`; queda «Sin confirmar», origen panel (RN-31) |
-| GET | `/agenda/citas/{id}` | Personal | Con historial de eventos |
+| GET | `/agenda/citas/{id}` | Personal | Con historial de eventos y el estado de sus WhatsApp (`mensajes`) |
 | POST | `/agenda/citas/{id}/reprogramar` | Administrador | Otra hora y/o barbero; renueva el enlace y avisa al cliente |
 | POST | `/agenda/citas/{id}/cancelar` | Administrador | `{ motivo: solicitud_cliente \| barbero_no_disponible \| otro, avisar_cliente }` |
 | POST | `/agenda/citas/{id}/confirmar` | Administrador | Solo «Sin confirmar» |
 | POST | `/agenda/citas/{id}/iniciar` | Personal (la propia) | Pasa a «En curso» |
 | POST | `/agenda/citas/{id}/inasistencia` | Personal (la propia) | Solo el día de la cita o después; suma en la ficha del cliente |
+| POST | `/agenda/citas/{id}/recordatorio` | Personal (la propia) | Recordatorio manual (RF-NOT-05): no si el cliente los desactivó, máximo uno cada 15 minutos |
+| POST | `/agenda/citas/reasignacion` | Administrador | `{ cita_ids, barbero_destino_id }`: misma hora, otro barbero; todo o nada (RF-BAR-14) |
+| POST | `/agenda/citas/aviso-reprogramacion` | Administrador | `{ cita_ids }`: WhatsApp con un enlace nuevo para elegir otra hora (RF-BAR-14) |
 | GET | `/agenda/disponibilidad/horas?servicio_id=&barbero_id=&fecha=` | Administrador | Variante del personal del motor |
 | POST | `/agenda/conflictos` | Administrador o el propio barbero | Citas afectadas por una `ausencia`, un `bloqueo` o un `horario_propuesto` (RF-BAR-13) |
 | GET | `/agenda/pendientes-de-cierre?fecha=` | Administrador | Citas ya terminadas sin cerrar |
@@ -70,14 +74,26 @@ Funciones puras, probadas sin base de datos:
   la cita y se renueva al reprogramar desde el panel.
 - Precio vigente al agendar; las cancelaciones nunca suman inasistencias (DA-17).
 
+## Recordatorios y respuestas (fase 4)
+
+- **Automáticos** (tarea `agenda.recordatorios`, cada 5 minutos): el de 24 h sale desde un día
+  antes y hasta 2 h antes; el de 2 h, desde 2 h antes hasta la hora. Solo si la cita ya tenía su
+  hora cuando el recordatorio venció (una cita agendada hace una hora no recibe el de 24 h) y
+  el cliente no los desactivó. Un índice único deja uno solo por cita, tipo y hora (E2E-NOT-01).
+- **Botones del recordatorio**: «Confirmo» confirma una cita «Sin confirmar»; «Cancelar cita»
+  la cancela como desde el enlace (tardía según el aviso mínimo) y envía el aviso.
+- **Avisos a la administradora**: si un cambio de horario, un bloqueo o una ausencia de un
+  barbero deja citas por fuera, se crea un aviso con las citas afectadas (RF-BAR-14, DA-08).
+
 ## Eventos que publica (crate `contratos`)
 
 - `CitaCreada`, `CitaReprogramada`, `CitaCancelada`, `InasistenciaMarcada`
 
 ## Eventos que consume
 
-- `VentaRegistrada` (ventas, fase 5): la cita queda «Atendida».
-- `RespuestaWhatsAppRecibida` (notificaciones, fase 4): confirma o cancela la cita.
+- `VentaRegistrada` (ventas): la cita queda «Atendida», con el evento en su historial.
+- `RespuestaWhatsAppRecibida` (notificaciones): confirma o cancela la cita.
+- `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada` (barberos): aviso si hay citas afectadas.
 
 ## Estructura
 

@@ -6,7 +6,9 @@ use plataforma::base_datos::{UnidadDeTrabajo, a_error_persistencia};
 
 use crate::api::{ClienteConocido, DatosReservaEnLinea};
 use crate::aplicacion::dto::AutorizacionDto;
-use crate::aplicacion::puertos::{ClienteGuardado, RepositorioClientes};
+use crate::aplicacion::puertos::{
+    ClienteGuardado, RepositorioClientes, RepositorioTitular, SolicitudGuardada,
+};
 use crate::dominio::{DatosCliente, UmbralesSegmentos};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -252,5 +254,156 @@ impl RepositorioClientes<UnidadDeTrabajo> for RepositorioClientesPg {
             max_visitas_recurrente: i32::from(recurrente),
             dias_inactividad: i64::from(dias),
         })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct FilaSolicitud {
+    id: i64,
+    cliente_id: Option<i64>,
+    tipo: String,
+    descripcion: String,
+    recibida_en: DateTime<Utc>,
+    respondida_en: Option<DateTime<Utc>>,
+    respondida_por: Option<i64>,
+    respuesta: Option<String>,
+}
+
+impl From<FilaSolicitud> for SolicitudGuardada {
+    fn from(f: FilaSolicitud) -> Self {
+        SolicitudGuardada {
+            id: f.id,
+            cliente: f.cliente_id.map(IdCliente),
+            tipo: f.tipo,
+            descripcion: f.descripcion,
+            recibida_en: f.recibida_en,
+            respondida_en: f.respondida_en,
+            respondida_por: f.respondida_por,
+            respuesta: f.respuesta,
+        }
+    }
+}
+
+const COLUMNAS_SOLICITUD: &str = "id, cliente_id, tipo::text AS tipo, descripcion, recibida_en, respondida_en, \
+                                  respondida_por, respuesta";
+
+#[async_trait]
+impl RepositorioTitular<UnidadDeTrabajo> for RepositorioClientesPg {
+    async fn anonimizar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: IdCliente,
+        ahora: DateTime<Utc>,
+    ) -> Result<bool, ErrorPersistencia> {
+        let filas = sqlx::query(
+            "UPDATE clientes.cliente
+             SET celular = NULL, nombre = NULL, correo = NULL, fecha_nacimiento = NULL, preferencias = NULL,
+                 recordatorios_activos = false, anonimizado_en = $2
+             WHERE id = $1 AND anonimizado_en IS NULL",
+        )
+        .bind(id.0)
+        .bind(ahora)
+        .execute(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?
+        .rows_affected();
+        // La prueba de la autorización se conserva, pero queda revocada.
+        sqlx::query(
+            "UPDATE clientes.autorizacion SET revocada_en = $2 WHERE cliente_id = $1 AND revocada_en IS NULL",
+        )
+        .bind(id.0)
+        .bind(ahora)
+        .execute(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(filas == 1)
+    }
+
+    async fn solicitudes(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        solo_abiertas: bool,
+        pagina: SolicitudPagina,
+    ) -> Result<(Vec<SolicitudGuardada>, i64), ErrorPersistencia> {
+        let filas: Vec<FilaSolicitud> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNAS_SOLICITUD} FROM clientes.solicitud_titular
+             WHERE (NOT $1 OR respondida_en IS NULL)
+             ORDER BY recibida_en DESC, id DESC LIMIT $2 OFFSET $3"
+        )))
+        .bind(solo_abiertas)
+        .bind(pagina.limite())
+        .bind(pagina.desplazamiento())
+        .fetch_all(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        let total: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM clientes.solicitud_titular WHERE (NOT $1 OR respondida_en IS NULL)",
+        )
+        .bind(solo_abiertas)
+        .fetch_one(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok((filas.into_iter().map(SolicitudGuardada::from).collect(), total))
+    }
+
+    async fn crear_solicitud(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        cliente: Option<IdCliente>,
+        tipo: &str,
+        descripcion: &str,
+        ahora: DateTime<Utc>,
+    ) -> Result<SolicitudGuardada, ErrorPersistencia> {
+        let fila: FilaSolicitud = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO clientes.solicitud_titular (cliente_id, tipo, descripcion, recibida_en)
+             VALUES ($1, $2::clientes.tipo_solicitud_titular, $3, $4)
+             RETURNING {COLUMNAS_SOLICITUD}"
+        )))
+        .bind(cliente.map(|c| c.0))
+        .bind(tipo)
+        .bind(descripcion)
+        .bind(ahora)
+        .fetch_one(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(fila.into())
+    }
+
+    async fn solicitud(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: i64,
+    ) -> Result<Option<SolicitudGuardada>, ErrorPersistencia> {
+        let fila: Option<FilaSolicitud> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNAS_SOLICITUD} FROM clientes.solicitud_titular WHERE id = $1 FOR UPDATE"
+        )))
+        .bind(id)
+        .fetch_optional(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(fila.map(SolicitudGuardada::from))
+    }
+
+    async fn responder_solicitud(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: i64,
+        usuario: i64,
+        respuesta: &str,
+        ahora: DateTime<Utc>,
+    ) -> Result<Option<SolicitudGuardada>, ErrorPersistencia> {
+        let fila: Option<FilaSolicitud> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "UPDATE clientes.solicitud_titular SET respondida_en = $2, respondida_por = $3, respuesta = $4
+             WHERE id = $1 AND respondida_en IS NULL
+             RETURNING {COLUMNAS_SOLICITUD}"
+        )))
+        .bind(id)
+        .bind(ahora)
+        .bind(usuario)
+        .bind(respuesta)
+        .fetch_optional(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(fila.map(SolicitudGuardada::from))
     }
 }

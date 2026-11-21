@@ -96,6 +96,27 @@ pub struct Configuracion {
     /// Rutas de apoyo para pruebas (`/api/v1/_pruebas/…`): solo con `DIAMANTE_PRUEBAS_E2E=true`
     /// y nunca en producción.
     pub rutas_de_pruebas: bool,
+    pub whatsapp: ConfiguracionWhatsApp,
+    /// La API también ejecuta las tareas del worker (`DIAMANTE_WORKER_EN_API=true`). En el
+    /// ambiente E2E así todo comparte un solo reloj (`/_pruebas/reloj`).
+    pub worker_en_api: bool,
+}
+
+/// WhatsApp. Sin credenciales de Meta, fuera de producción se usa el adaptador simulado; en
+/// producción los mensajes quedan en cola hasta configurar Meta (como el correo sin SMTP).
+#[derive(Debug, Clone)]
+pub struct ConfiguracionWhatsApp {
+    pub simulado: bool,
+    /// Webhook de Meta (`/api/v1/webhooks/whatsapp`). Sin él, el webhook rechaza todo.
+    pub webhook: Option<WebhookWhatsApp>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebhookWhatsApp {
+    /// Secreto de la app de Meta: firma `X-Hub-Signature-256`.
+    pub secreto_app: Secreto,
+    /// Token que Meta envía al registrar el webhook (`hub.verify_token`).
+    pub token_verificacion: Secreto,
 }
 
 /// Clave AES-256 que nunca se imprime en logs ni en `Debug`.
@@ -296,6 +317,32 @@ impl Configuracion {
             }
         };
 
+        let webhook = match (
+            leer("DIAMANTE_WHATSAPP_SECRETO_APP"),
+            leer("DIAMANTE_WHATSAPP_TOKEN_VERIFICACION"),
+        ) {
+            (Some(secreto), Some(token)) => Some(WebhookWhatsApp {
+                secreto_app: Secreto::nuevo(secreto),
+                token_verificacion: Secreto::nuevo(token),
+            }),
+            (None, None) => None,
+            _ => {
+                invalidas.push(
+                    "DIAMANTE_WHATSAPP_SECRETO_APP y DIAMANTE_WHATSAPP_TOKEN_VERIFICACION van juntas"
+                        .to_owned(),
+                );
+                None
+            }
+        };
+        let worker_en_api = match leer("DIAMANTE_WORKER_EN_API").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(otro) => {
+                invalidas.push(format!("DIAMANTE_WORKER_EN_API={otro} (use true o false)"));
+                false
+            }
+        };
+
         if !faltantes.is_empty() || !invalidas.is_empty() {
             return Err(ErrorConfiguracion { faltantes, invalidas });
         }
@@ -316,6 +363,11 @@ impl Configuracion {
             clave_firma,
             clave_cifrado,
             rutas_de_pruebas,
+            whatsapp: ConfiguracionWhatsApp {
+                simulado: entorno != Entorno::Produccion,
+                webhook,
+            },
+            worker_en_api,
         })
     }
 }
@@ -442,6 +494,36 @@ mod pruebas {
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn whatsapp_simulado_fuera_de_produccion_y_secretos_del_webhook_juntos() {
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        assert!(c.whatsapp.simulado && c.whatsapp.webhook.is_none() && !c.worker_en_api);
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_WHATSAPP_SECRETO_APP", "s"),
+            ("DIAMANTE_WHATSAPP_TOKEN_VERIFICACION", "t"),
+            ("DIAMANTE_WORKER_EN_API", "true"),
+        ]))
+        .unwrap();
+        assert!(c.whatsapp.webhook.is_some() && c.worker_en_api);
+        assert!(!format!("{c:?}").contains("\"s\""));
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_WHATSAPP_SECRETO_APP", "s"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.invalidas.len(), 1);
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
+            FIRMA,
+            CIFRADO,
+        ]))
+        .unwrap();
+        assert!(!c.whatsapp.simulado, "en producción nunca se simula");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
@@ -85,14 +85,19 @@ where
 }
 
 /// Bus de eventos. Las suscripciones se registran en la raíz de composición (`app`).
+/// Manejadores de cada tipo de evento.
+type Suscripciones<C> = HashMap<TypeId, Vec<Arc<dyn ManejadorBorrado<C>>>>;
+
 pub struct BusEventos<C> {
-    manejadores: HashMap<TypeId, Vec<Arc<dyn ManejadorBorrado<C>>>>,
+    // Las suscripciones se agregan al armar la aplicación, incluso después de repartir el bus
+    // (los manejadores de un módulo pueden necesitar fachadas que se construyen más tarde).
+    manejadores: RwLock<Suscripciones<C>>,
 }
 
 impl<C> fmt::Debug for BusEventos<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BusEventos")
-            .field("tipos_de_evento", &self.manejadores.len())
+            .field("tipos_de_evento", &self.manejadores.read().map_or(0, |m| m.len()))
             .finish()
     }
 }
@@ -100,7 +105,7 @@ impl<C> fmt::Debug for BusEventos<C> {
 impl<C: Send + 'static> Default for BusEventos<C> {
     fn default() -> Self {
         Self {
-            manejadores: HashMap::new(),
+            manejadores: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -110,8 +115,12 @@ impl<C: Send + 'static> BusEventos<C> {
         Self::default()
     }
 
+    fn leer(&self) -> std::sync::RwLockReadGuard<'_, Suscripciones<C>> {
+        self.manejadores.read().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Registra un manejador. Los manejadores de un mismo evento se ejecutan en orden de registro.
-    pub fn suscribir<E, H>(&mut self, manejador: H)
+    pub fn suscribir<E, H>(&self, manejador: H)
     where
         E: EventoDominio,
         H: ManejadorEvento<E, C>,
@@ -121,6 +130,8 @@ impl<C: Send + 'static> BusEventos<C> {
             _evento: PhantomData::<fn(E)>,
         };
         self.manejadores
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(TypeId::of::<E>())
             .or_default()
             .push(Arc::new(adaptador));
@@ -133,10 +144,12 @@ impl<C: Send + 'static> BusEventos<C> {
         contexto: &mut C,
         evento: &E,
     ) -> Result<(), ErrorDePublicacion> {
-        let Some(manejadores) = self.manejadores.get(&TypeId::of::<E>()) else {
+        // Copia de la lista: el candado no se mantiene durante los `await`, así un manejador
+        // puede publicar otros eventos.
+        let Some(manejadores) = self.leer().get(&TypeId::of::<E>()).cloned() else {
             return Ok(());
         };
-        for manejador in manejadores {
+        for manejador in &manejadores {
             manejador
                 .manejar(contexto, evento)
                 .await
@@ -197,7 +210,7 @@ mod pruebas {
 
     #[tokio::test]
     async fn entrega_en_orden_y_solo_a_los_suscritos() {
-        let mut bus = BusEventos::<Vec<String>>::nuevo();
+        let bus = BusEventos::<Vec<String>>::nuevo();
         bus.suscribir(Anotar("agenda"));
         bus.suscribir(Anotar("clientes"));
         let mut contexto = Vec::new();
@@ -208,7 +221,7 @@ mod pruebas {
 
     #[tokio::test]
     async fn se_detiene_en_el_primer_error() {
-        let mut bus = BusEventos::<Vec<String>>::nuevo();
+        let bus = BusEventos::<Vec<String>>::nuevo();
         bus.suscribir(Fallar);
         bus.suscribir(Anotar("clientes"));
         let mut contexto = Vec::new();

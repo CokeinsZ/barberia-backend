@@ -94,9 +94,18 @@ impl Escenario {
             reloj: reloj.clone(),
             perfiles: Arc::new(SinBarberos),
             auditor: ModuloAuditoria::con_postgres(base.pool.clone(), reloj.clone()).auditor(),
-            buzon: ModuloNotificaciones::con_postgres(base.pool.clone(), reloj, None)
-                .unwrap()
-                .buzon(),
+            buzon: ModuloNotificaciones::con_postgres(notificaciones::DependenciasNotificaciones {
+                pool: base.pool.clone(),
+                reloj,
+                smtp: None,
+                whatsapp: &plataforma::configuracion::ConfiguracionWhatsApp {
+                    simulado: false,
+                    webhook: None,
+                },
+                bus: Arc::new(nucleo::eventos::BusEventos::nuevo()),
+            })
+            .unwrap()
+            .buzon(),
             url_publica: "https://diamante.co".into(),
         });
         let enrutador = Router::new()

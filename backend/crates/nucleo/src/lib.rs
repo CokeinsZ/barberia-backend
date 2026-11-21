@@ -18,7 +18,7 @@ pub mod valores;
 pub use actor::{Actor, TipoActor};
 pub use errores::{Categoria, ErrorDeAplicacion, ErrorDeCampo, ErrorPersistencia, ErrorValor, Validacion};
 pub use paginacion::{Pagina, SolicitudPagina};
-pub use reloj::{Reloj, RelojControlado, RelojSistema, ZONA_HORARIA};
+pub use reloj::{Reloj, RelojControlado, RelojDePruebas, RelojSistema, ZONA_HORARIA};
 pub use transacciones::{SinTransaccion, Transacciones};
 pub use valores::{Celular, Correo, Dinero, Porcentaje};
 

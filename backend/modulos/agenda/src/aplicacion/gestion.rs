@@ -42,20 +42,6 @@ impl<C: Send + 'static> Gestion<C> {
         self.p.cita(cx, id, bloquear).await
     }
 
-    fn evento(cita: &CitaGuardada, evento: &'static str, tardio: bool, ahora: DateTime<Utc>) -> EventoCita {
-        EventoCita {
-            cita: cita.id,
-            evento,
-            actor: TipoActor::Cliente,
-            usuario: None,
-            inicio_previo: None,
-            barbero_previo: None,
-            tardio,
-            detalle: None,
-            ahora,
-        }
-    }
-
     pub(crate) async fn ver(&self, token: &str) -> Result<GestionCitaDto, ErrorAgenda> {
         let p = &self.p;
         let ahora = p.reloj.ahora();
@@ -100,35 +86,7 @@ impl<C: Send + 'static> Gestion<C> {
         if !cita.estado.pendiente() || cita.inicio <= ahora {
             return Err(ErrorAgenda::EstadoInvalido("La cita ya no se puede cancelar."));
         }
-        let configuracion = p.citas.configuracion(&mut cx).await?;
-        let tardia = cancelacion_tardia(
-            cita.inicio,
-            ahora,
-            TimeDelta::minutes(i64::from(configuracion.aviso_cancelacion_min)),
-        );
-        p.citas
-            .cancelar(
-                &mut cx,
-                cita.id,
-                TipoActor::Cliente,
-                "solicitud_cliente",
-                tardia,
-                ahora,
-            )
-            .await?;
-        p.citas
-            .registrar_evento(&mut cx, &Self::evento(&cita, "cancelada", tardia, ahora))
-            .await?;
-        p.avisar(&mut cx, &cita, "cancelacion", None).await?;
-        p.publicar(
-            &mut cx,
-            &CitaCancelada {
-                cita: cita.id,
-                tardia,
-                avisar_cliente: true,
-            },
-        )
-        .await?;
+        cancelar_por_cliente(p, &mut cx, &cita, None).await?;
         p.transacciones.confirmar(cx).await?;
         self.ver(token).await
     }
@@ -166,7 +124,7 @@ impl<C: Send + 'static> Gestion<C> {
             }
             Err(otro) => return Err(otro.into()),
         }
-        let mut evento = Self::evento(&cita, "reprogramada", false, ahora);
+        let mut evento = evento_cliente(&cita, "reprogramada", false, ahora);
         evento.inicio_previo = Some(cita.inicio);
         evento.barbero_previo = Some(cita.barbero);
         p.citas.registrar_evento(&mut cx, &evento).await?;
@@ -207,4 +165,66 @@ impl<C: Send + 'static> Gestion<C> {
         p.transacciones.confirmar(cx).await?;
         self.ver(token).await
     }
+}
+
+/// Evento del historial hecho por el cliente (desde su enlace o por WhatsApp).
+pub(crate) fn evento_cliente(
+    cita: &CitaGuardada,
+    evento: &'static str,
+    tardio: bool,
+    ahora: DateTime<Utc>,
+) -> EventoCita {
+    EventoCita {
+        cita: cita.id,
+        evento,
+        actor: TipoActor::Cliente,
+        usuario: None,
+        inicio_previo: None,
+        barbero_previo: None,
+        tardio,
+        detalle: None,
+        ahora,
+    }
+}
+
+/// Cancelación pedida por el cliente, desde su enlace o con el botón «Cancelar cita» del
+/// recordatorio: tardía si falta menos que el aviso mínimo (RN-09), nunca una inasistencia
+/// (DA-17). Recibe el aviso de cancelación por WhatsApp.
+pub(crate) async fn cancelar_por_cliente<C: Send + 'static>(
+    p: &Puertos<C>,
+    cx: &mut C,
+    cita: &CitaGuardada,
+    detalle: Option<&str>,
+) -> Result<bool, ErrorAgenda> {
+    let ahora = p.reloj.ahora();
+    let configuracion = p.citas.configuracion(cx).await?;
+    let tardia = cancelacion_tardia(
+        cita.inicio,
+        ahora,
+        TimeDelta::minutes(i64::from(configuracion.aviso_cancelacion_min)),
+    );
+    p.citas
+        .cancelar(
+            cx,
+            cita.id,
+            TipoActor::Cliente,
+            "solicitud_cliente",
+            tardia,
+            ahora,
+        )
+        .await?;
+    let mut evento = evento_cliente(cita, "cancelada", tardia, ahora);
+    evento.detalle = detalle.map(str::to_owned);
+    p.citas.registrar_evento(cx, &evento).await?;
+    p.avisar(cx, cita, "cancelacion", None).await?;
+    p.publicar(
+        cx,
+        &CitaCancelada {
+            cita: cita.id,
+            tardia,
+            avisar_cliente: true,
+        },
+    )
+    .await?;
+    Ok(tardia)
 }

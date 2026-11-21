@@ -73,9 +73,59 @@ pub(crate) trait RepositorioClientes<C: Send>: Send + Sync + fmt::Debug {
     async fn umbrales(&self, cx: &mut C) -> Result<UmbralesSegmentos, ErrorPersistencia>;
 }
 
+/// Solicitud del titular leída de la base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SolicitudGuardada {
+    pub(crate) id: i64,
+    pub(crate) cliente: Option<IdCliente>,
+    pub(crate) tipo: String,
+    pub(crate) descripcion: String,
+    pub(crate) recibida_en: DateTime<Utc>,
+    pub(crate) respondida_en: Option<DateTime<Utc>>,
+    pub(crate) respondida_por: Option<i64>,
+    pub(crate) respuesta: Option<String>,
+}
+
+/// Derechos del titular (Ley 1581): anonimización y solicitudes.
+#[async_trait]
+pub(crate) trait RepositorioTitular<C: Send>: Send + Sync + fmt::Debug {
+    /// Borra los datos personales y conserva las cifras (RF-CLI-07). `false` si no existía.
+    async fn anonimizar(
+        &self,
+        cx: &mut C,
+        id: IdCliente,
+        ahora: DateTime<Utc>,
+    ) -> Result<bool, ErrorPersistencia>;
+    async fn solicitudes(
+        &self,
+        cx: &mut C,
+        solo_abiertas: bool,
+        pagina: nucleo::SolicitudPagina,
+    ) -> Result<(Vec<SolicitudGuardada>, i64), ErrorPersistencia>;
+    async fn crear_solicitud(
+        &self,
+        cx: &mut C,
+        cliente: Option<IdCliente>,
+        tipo: &str,
+        descripcion: &str,
+        ahora: DateTime<Utc>,
+    ) -> Result<SolicitudGuardada, ErrorPersistencia>;
+    async fn solicitud(&self, cx: &mut C, id: i64) -> Result<Option<SolicitudGuardada>, ErrorPersistencia>;
+    async fn responder_solicitud(
+        &self,
+        cx: &mut C,
+        id: i64,
+        usuario: i64,
+        respuesta: &str,
+        ahora: DateTime<Utc>,
+    ) -> Result<Option<SolicitudGuardada>, ErrorPersistencia>;
+}
+
 pub(crate) struct Puertos<C: Send> {
     pub(crate) transacciones: Arc<dyn Transacciones<C>>,
     pub(crate) clientes: Arc<dyn RepositorioClientes<C>>,
+    pub(crate) titular: Arc<dyn RepositorioTitular<C>>,
+    pub(crate) agenda: Arc<dyn crate::api::AgendaDelCliente<C>>,
     pub(crate) auditor: Arc<dyn Auditor<C>>,
     pub(crate) reloj: Arc<dyn Reloj>,
 }

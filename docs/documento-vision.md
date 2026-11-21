@@ -745,7 +745,7 @@ La columna **Fuente** indica el origen de cada requisito:
 | RF-RES-14 | Página de gestión de la cita, accesible solo con el enlace único enviado por WhatsApp, para ver la cita y cancelarla hasta la hora de inicio; dentro del aviso mínimo queda marcada como cancelación tardía (RN-09). | Must | Mockup (sin pantalla) | CU-10 |
 | RF-RES-15 | Reprogramar la cita desde el mismo enlace, hasta la hora de inicio, eligiendo nueva fecha y hora con las mismas reglas de disponibilidad. | Should | Mockup (sin pantalla) | CU-11 |
 | RF-RES-16 | Aplicar al reservar en línea la política de inasistencias configurada. | Should | Mockup | CU-05, CU-80 |
-| RF-RES-17 | Permitir descargar la cita como archivo .ics para otros calendarios (Apple, Outlook). | Could | Propuesto | CU-08 |
+| RF-RES-17 | ~~Permitir descargar la cita como archivo .ics para otros calendarios (Apple, Outlook).~~ **Descartado (DA-18)**: solo Google Calendar. | Could | Propuesto | CU-08 |
 | RF-RES-18 | Desactivar los recordatorios por WhatsApp desde el enlace de la cita. | Should | Propuesto | CU-12 |
 
 #### 5.2.3 Notificaciones (NOT)
@@ -1209,6 +1209,7 @@ Decisiones tomadas el 18 de noviembre de 2026 sobre los temas que el mockup no r
 | DA-15 | Framework de las islas | **React.** | 4.1, DEP-06 |
 | DA-16 | Migración de datos | **No hay** datos previos que importar. | S-12, W-16 |
 | DA-17 | Cancelación tardía | Cuenta como **cancelación**, no como inasistencia, y queda marcada para estadísticas. | RN-09, RF-RES-14 |
+| DA-18 | Agregar la cita al calendario | **Solo Google Calendar** (enlace con servicio, horas y zona America/Bogota). No se genera archivo `.ics`. | RF-RES-13, RF-RES-17 |
 
 ---
 

@@ -52,6 +52,36 @@ pub struct BarberoAgenda {
     pub bloqueos: Vec<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
+/// Barbero tal como lo necesita una venta (RF-VEN-04, RN-05, RN-15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BarberoVenta {
+    pub id: IdBarbero,
+    pub nombre: String,
+    /// Sin retiro ni ausencia en la fecha de la venta.
+    pub activo: bool,
+    pub servicios: Vec<IdServicio>,
+    /// Su comisión vigente: la venta guarda una copia (RNF-INT-05).
+    pub porcentaje_comision: nucleo::Porcentaje,
+}
+
+/// Fachada para `ventas`, en la transacción de quien llama.
+#[async_trait]
+pub trait EquipoVentas<C: Send>: Send + Sync + std::fmt::Debug {
+    async fn para_venta(
+        &self,
+        cx: &mut C,
+        barbero: IdBarbero,
+        fecha: NaiveDate,
+    ) -> Result<Option<BarberoVenta>, nucleo::ErrorPersistencia>;
+
+    /// Nombres completos, también de los retirados (para el historial de ventas).
+    async fn nombres(
+        &self,
+        cx: &mut C,
+        ids: &[IdBarbero],
+    ) -> Result<std::collections::HashMap<IdBarbero, String>, nucleo::ErrorPersistencia>;
+}
+
 /// Fachada para `agenda`: el equipo con su horario, ausencias y bloqueos en un rango de fechas
 /// (incluidas), en el orden del equipo. No incluye a los retirados antes de `desde`.
 #[async_trait]

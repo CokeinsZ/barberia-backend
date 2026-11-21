@@ -135,3 +135,16 @@ impl RepositorioCodigos<UnidadDeTrabajo> for RepositorioCodigosPg {
         .map_err(a_error_persistencia)
     }
 }
+
+/// Mantenimiento nocturno: códigos vencidos hace más de 7 días (ya no sirven ni para revisar abusos).
+pub(crate) async fn limpiar(
+    pool: &sqlx::PgPool,
+    ahora: chrono::DateTime<chrono::Utc>,
+) -> Result<u64, ErrorPersistencia> {
+    sqlx::query("DELETE FROM verificacion.codigo WHERE expira_en < $1 AND (comprobante_expira_en IS NULL OR comprobante_expira_en < $1)")
+        .bind(ahora - chrono::TimeDelta::days(7))
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(a_error_persistencia)
+}

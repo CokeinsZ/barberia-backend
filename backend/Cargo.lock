@@ -96,6 +96,7 @@ dependencies = [
  "axum",
  "barberos",
  "catalogo",
+ "chrono",
  "clientes",
  "http-body-util",
  "identidad",
@@ -104,6 +105,7 @@ dependencies = [
  "nucleo",
  "plataforma",
  "reportes",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",
@@ -1332,6 +1334,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "contratos",
  "lettre",
  "nucleo",
  "plataforma",
@@ -2212,7 +2215,16 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 name = "trabajos"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
+ "nucleo",
+ "plataforma",
+ "serde",
+ "serde_json",
  "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2393,7 +2405,23 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 name = "ventas"
 version = "0.1.0"
 dependencies = [
+ "agenda",
+ "async-trait",
+ "auditoria",
+ "axum",
+ "barberos",
+ "catalogo",
+ "chrono",
+ "clientes",
+ "contratos",
+ "nucleo",
+ "plataforma",
+ "serde",
+ "serde_json",
  "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

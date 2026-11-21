@@ -7,19 +7,26 @@ use auditoria::api::Auditor;
 use axum::Router;
 use barberos::api::EquipoAgenda;
 use catalogo::api::CatalogoServicios;
+use chrono::{DateTime, Utc};
 use clientes::api::ClientesAgenda;
+use contratos::barberos::{AusenciaRegistrada, BloqueoCreado, HorarioCambiado};
+use contratos::notificaciones::RespuestaWhatsAppRecibida;
+use contratos::ventas::VentaRegistrada;
 use negocio::api::{CalendarioNegocio, DatosPublicos};
-use notificaciones::api::BuzonSalida;
+use notificaciones::api::{Avisos, BuzonSalida, ConsultaMensajes};
 use nucleo::Reloj;
 use nucleo::eventos::BusEventos;
 use plataforma::base_datos::{TransaccionesPg, UnidadDeTrabajo};
 use sqlx::PgPool;
 use verificacion::api::Comprobantes;
 
+use crate::api::{ErrorAgenda, ResumenRecordatorios};
 use crate::aplicacion::CasosDeUso;
+use crate::aplicacion::fachada::FachadaCitas;
+use crate::aplicacion::manejadores::{AlCambiarDisponibilidad, AlRegistrarVenta, AlResponderWhatsApp};
 use crate::aplicacion::puertos::Puertos;
 use crate::http::{self, Estado};
-use crate::infraestructura::postgres::RepositorioAgendaPg;
+use crate::infraestructura::postgres::{RepositorioAgendaPg, limpiar};
 
 #[derive(Debug, Clone)]
 pub struct DependenciasAgenda {
@@ -32,6 +39,8 @@ pub struct DependenciasAgenda {
     pub clientes: Arc<dyn ClientesAgenda<UnidadDeTrabajo>>,
     pub comprobantes: Arc<dyn Comprobantes<UnidadDeTrabajo>>,
     pub buzon: Arc<dyn BuzonSalida<UnidadDeTrabajo>>,
+    pub avisos: Arc<dyn Avisos<UnidadDeTrabajo>>,
+    pub mensajes: Arc<dyn ConsultaMensajes<UnidadDeTrabajo>>,
     pub auditor: Arc<dyn Auditor<UnidadDeTrabajo>>,
     pub bus: Arc<BusEventos<UnidadDeTrabajo>>,
     /// URL pública del sitio, para los enlaces de gestión de las citas.
@@ -40,12 +49,14 @@ pub struct DependenciasAgenda {
 
 #[derive(Debug, Clone)]
 pub struct ModuloAgenda {
+    pool: PgPool,
     casos: Arc<CasosDeUso<UnidadDeTrabajo>>,
 }
 
 impl ModuloAgenda {
     pub fn con_postgres(d: DependenciasAgenda) -> Self {
         Self {
+            pool: d.pool.clone(),
             casos: Arc::new(CasosDeUso::nuevos(Puertos {
                 transacciones: Arc::new(TransaccionesPg::nuevas(d.pool)),
                 citas: Arc::new(RepositorioAgendaPg),
@@ -56,6 +67,8 @@ impl ModuloAgenda {
                 clientes: d.clientes,
                 comprobantes: d.comprobantes,
                 buzon: d.buzon,
+                avisos: d.avisos,
+                mensajes: d.mensajes,
                 bus: d.bus,
                 auditor: d.auditor,
                 reloj: d.reloj,
@@ -67,5 +80,40 @@ impl ModuloAgenda {
     /// Rutas públicas y del panel, para montarlas bajo `/api/v1`.
     pub fn rutas(&self) -> Router {
         http::rutas(Estado::nuevo(self.casos.clone()))
+    }
+
+    /// Reacciones de la agenda a otros módulos: respuestas a los botones del recordatorio y
+    /// avisos cuando un cambio del barbero deja citas por fuera.
+    pub fn suscribir(&self, bus: &BusEventos<UnidadDeTrabajo>) {
+        let p = &self.casos.p;
+        bus.suscribir::<RespuestaWhatsAppRecibida, _>(AlResponderWhatsApp { p: p.clone() });
+        bus.suscribir::<HorarioCambiado, _>(AlCambiarDisponibilidad { p: p.clone() });
+        bus.suscribir::<BloqueoCreado, _>(AlCambiarDisponibilidad { p: p.clone() });
+        bus.suscribir::<AusenciaRegistrada, _>(AlCambiarDisponibilidad { p: p.clone() });
+        bus.suscribir::<VentaRegistrada, _>(AlRegistrarVenta { p: p.clone() });
+    }
+
+    /// Fachada para `ventas`: la cita que se cobra.
+    pub fn citas_para_ventas(&self) -> Arc<dyn crate::api::CitasParaVentas<UnidadDeTrabajo>> {
+        Arc::new(FachadaCitas {
+            p: self.casos.p.clone(),
+        })
+    }
+
+    /// Fachada para `clientes` (por un adaptador en `app`): citas por atender de un cliente.
+    pub fn citas_de_clientes(&self) -> Arc<dyn crate::api::CitasDeClientes<UnidadDeTrabajo>> {
+        Arc::new(FachadaCitas {
+            p: self.casos.p.clone(),
+        })
+    }
+
+    /// Tarea periódica del worker: recordatorios de 24 h y 2 h (RF-NOT-02).
+    pub async fn enviar_recordatorios(&self) -> Result<ResumenRecordatorios, ErrorAgenda> {
+        self.casos.recordatorios.enviar_debidos().await
+    }
+
+    /// Mantenimiento: borra los enlaces de gestión vencidos.
+    pub async fn limpiar(&self, ahora: DateTime<Utc>) -> Result<u64, ErrorAgenda> {
+        Ok(limpiar(&self.pool, ahora).await?)
     }
 }

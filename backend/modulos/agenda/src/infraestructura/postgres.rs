@@ -9,7 +9,7 @@ use plataforma::seguridad::Huella;
 
 use crate::aplicacion::dto::EventoCitaDto;
 use crate::aplicacion::puertos::{
-    CitaGuardada, EventoCita, FiltroCitas, NuevaCita, RepositorioAgenda, local,
+    CitaGuardada, CitaParaRecordar, EventoCita, FiltroCitas, NuevaCita, RepositorioAgenda, local,
 };
 use crate::dominio::cita::EstadoCita;
 use crate::dominio::configuracion::ConfiguracionAgenda;
@@ -35,6 +35,19 @@ struct Fila {
     nota: Option<String>,
     cancelacion_tardia: Option<bool>,
     motivo_cancelacion: Option<String>,
+}
+
+/// Las mismas columnas de `COLUMNAS`, calificadas con el alias `c`.
+const COLUMNAS_C: &str = "c.id, c.cliente_id, c.barbero_id, c.servicio_id, c.inicio, c.fin, c.precio::bigint AS precio,
+     c.estado::text AS estado, c.origen::text AS origen, c.asignacion_automatica, c.nota, c.cancelacion_tardia,
+     c.motivo_cancelacion::text AS motivo_cancelacion";
+
+#[derive(sqlx::FromRow)]
+struct FilaRecordar {
+    #[sqlx(flatten)]
+    cita: Fila,
+    vigente_desde: DateTime<Utc>,
+    enviados: Vec<String>,
 }
 
 impl TryFrom<Fila> for CitaGuardada {
@@ -339,14 +352,17 @@ impl RepositorioAgenda<UnidadDeTrabajo> for RepositorioAgendaPg {
         cita: IdCita,
         huella: &Huella,
         expira_en: DateTime<Utc>,
+        ahora: DateTime<Utc>,
     ) -> Result<(), ErrorPersistencia> {
         sqlx::query(
-            "INSERT INTO agenda.enlace_gestion (cita_id, token_hash, expira_en) VALUES ($1, $2, $3)
-             ON CONFLICT (cita_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, expira_en = EXCLUDED.expira_en, creado_en = now()",
+            "INSERT INTO agenda.enlace_gestion (cita_id, token_hash, expira_en, creado_en) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (cita_id) DO UPDATE
+             SET token_hash = EXCLUDED.token_hash, expira_en = EXCLUDED.expira_en, creado_en = EXCLUDED.creado_en",
         )
         .bind(cita.0)
         .bind(&huella[..])
         .bind(expira_en)
+        .bind(ahora)
         .execute(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;
@@ -390,4 +406,99 @@ impl RepositorioAgenda<UnidadDeTrabajo> for RepositorioAgendaPg {
         .map_err(a_error_persistencia)?;
         Ok(())
     }
+
+    async fn citas_para_recordar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        desde: DateTime<Utc>,
+        hasta: DateTime<Utc>,
+    ) -> Result<Vec<CitaParaRecordar>, ErrorPersistencia> {
+        // `vigente_desde`: cuándo quedó la cita en su hora actual (creación o último cambio de
+        // hora). Un cambio solo de barbero no cuenta: la hora sigue siendo la misma.
+        let consulta = format!(
+            "SELECT {COLUMNAS_C},
+                    greatest(c.creada_en, coalesce((
+                        SELECT max(h.ocurrido_en) FROM agenda.historial_cita h
+                        WHERE h.cita_id = c.id AND h.evento IN ('reprogramada', 'reasignada')
+                          AND h.inicio_previo IS DISTINCT FROM c.inicio
+                    ), c.creada_en)) AS vigente_desde,
+                    coalesce((
+                        SELECT array_agg(m.proposito::text) FROM agenda.mensaje_cita m
+                        WHERE m.cita_id = c.id AND m.inicio_cita = c.inicio
+                          AND m.proposito IN ('recordatorio_24h', 'recordatorio_2h')
+                    ), '{{}}') AS enviados
+             FROM agenda.cita c
+             WHERE c.estado IN ('sin_confirmar', 'confirmada') AND c.inicio > $1 AND c.inicio <= $2
+             ORDER BY c.inicio, c.id"
+        );
+        let filas: Vec<FilaRecordar> = sqlx::query_as(sqlx::AssertSqlSafe(consulta))
+            .bind(desde)
+            .bind(hasta)
+            .fetch_all(uow.conexion())
+            .await
+            .map_err(a_error_persistencia)?;
+        filas
+            .into_iter()
+            .map(|f| {
+                Ok(CitaParaRecordar {
+                    vigente_desde: f.vigente_desde,
+                    recordatorios_enviados: f.enviados,
+                    cita: CitaGuardada::try_from(f.cita)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn mensajes_de_cita(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        cita: IdCita,
+    ) -> Result<Vec<(String, i64)>, ErrorPersistencia> {
+        sqlx::query_as(
+            "SELECT proposito::text, mensaje_id FROM agenda.mensaje_cita WHERE cita_id = $1 ORDER BY mensaje_id",
+        )
+        .bind(cita.0)
+        .fetch_all(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)
+    }
+
+    async fn pendientes_de_cliente(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        cliente: IdCliente,
+    ) -> Result<i64, ErrorPersistencia> {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM agenda.cita
+             WHERE cliente_id = $1 AND estado IN ('sin_confirmar', 'confirmada', 'en_curso')",
+        )
+        .bind(cliente.0)
+        .fetch_one(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)
+    }
+
+    async fn cita_por_mensaje(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        mensaje: i64,
+    ) -> Result<Option<(IdCita, String)>, ErrorPersistencia> {
+        let fila: Option<(i64, String)> =
+            sqlx::query_as("SELECT cita_id, proposito::text FROM agenda.mensaje_cita WHERE mensaje_id = $1")
+                .bind(mensaje)
+                .fetch_optional(uow.conexion())
+                .await
+                .map_err(a_error_persistencia)?;
+        Ok(fila.map(|(cita, proposito)| (IdCita(cita), proposito)))
+    }
+}
+
+/// Mantenimiento: enlaces de gestión vencidos (la cita ya pasó hace más de 30 días).
+pub(crate) async fn limpiar(pool: &sqlx::PgPool, ahora: DateTime<Utc>) -> Result<u64, ErrorPersistencia> {
+    sqlx::query("DELETE FROM agenda.enlace_gestion WHERE expira_en < $1")
+        .bind(ahora)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(a_error_persistencia)
 }

@@ -26,6 +26,7 @@ pub struct DependenciasVerificacion {
 
 #[derive(Debug, Clone)]
 pub struct ModuloVerificacion {
+    pool: sqlx::PgPool,
     verificacion: Arc<Verificacion<UnidadDeTrabajo>>,
     limites: Arc<Limites>,
 }
@@ -33,6 +34,7 @@ pub struct ModuloVerificacion {
 impl ModuloVerificacion {
     pub fn con_postgres(d: DependenciasVerificacion) -> Self {
         Self {
+            pool: d.pool.clone(),
             verificacion: Arc::new(Verificacion {
                 p: Arc::new(Puertos {
                     transacciones: Arc::new(TransaccionesPg::nuevas(d.pool)),
@@ -52,6 +54,14 @@ impl ModuloVerificacion {
             verificacion: self.verificacion.clone(),
             limites: self.limites.clone(),
         })
+    }
+
+    /// Mantenimiento nocturno: borra los códigos vencidos hace más de 7 días.
+    pub async fn limpiar(
+        &self,
+        ahora: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, nucleo::ErrorPersistencia> {
+        crate::infraestructura::postgres::limpiar(&self.pool, ahora).await
     }
 
     /// Fachada para `agenda`.

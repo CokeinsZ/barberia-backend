@@ -27,11 +27,14 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         .merge(composicion.clientes.rutas())
         .merge(composicion.verificacion.rutas())
         .merge(composicion.agenda.rutas())
+        .merge(composicion.notificaciones.rutas())
+        .merge(composicion.ventas.rutas())
         .layer(from_fn_with_state(composicion.origenes.clone(), verificar_origen));
 
-    // WhatsApp simulado: lectura de los mensajes en cola, solo en desarrollo y pruebas.
+    // Solo en desarrollo y pruebas: mensajes del WhatsApp simulado, reloj y pasada del worker.
     let v1 = if composicion.rutas_de_pruebas {
         v1.merge(composicion.notificaciones.rutas_de_pruebas())
+            .merge(crate::pruebas_e2e::rutas(composicion.clone()))
     } else {
         v1
     };

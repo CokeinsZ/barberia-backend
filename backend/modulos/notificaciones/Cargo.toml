@@ -1,6 +1,6 @@
 [package]
 name = "notificaciones"
-description = "Cola de salida de mensajes (patrón outbox), correo SMTP y, en la fase 4, WhatsApp Cloud API."
+description = "Cola de salida de mensajes (patrón outbox), correo SMTP, WhatsApp (simulado hasta tener Meta), webhooks y avisos internos."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,7 @@ publish.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 chrono.workspace = true
+contratos.workspace = true
 lettre.workspace = true
 nucleo.workspace = true
 plataforma.workspace = true

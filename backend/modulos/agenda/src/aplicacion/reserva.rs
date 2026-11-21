@@ -138,7 +138,7 @@ impl<C: Send + 'static> Reserva<C> {
         };
         let (token, huella) = generar_token().map_err(|e| ErrorAgenda::Interno(e.0))?;
         p.citas
-            .guardar_enlace(&mut cx, id, &huella, fin + VIGENCIA_ENLACE_DESPUES)
+            .guardar_enlace(&mut cx, id, &huella, fin + VIGENCIA_ENLACE_DESPUES, ahora)
             .await?;
         p.citas
             .registrar_evento(

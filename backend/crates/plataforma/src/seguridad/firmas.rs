@@ -70,9 +70,92 @@ impl FirmadorUrls {
     }
 }
 
+/// Firma de un webhook al estilo de Meta: `sha256=<hex>` con el HMAC-SHA256 del cuerpo exacto
+/// recibido y el secreto de la app (encabezado `X-Hub-Signature-256`).
+pub fn firma_webhook(secreto: &[u8], cuerpo: &[u8]) -> String {
+    let mut mac = mac_con(secreto);
+    mac.update(cuerpo);
+    let bytes = mac.finalize().into_bytes();
+    let mut hex = String::with_capacity(7 + 64);
+    hex.push_str("sha256=");
+    for byte in bytes {
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte >> 4)]));
+        hex.push(char::from(b"0123456789abcdef"[usize::from(byte & 0x0f)]));
+    }
+    hex
+}
+
+/// Verifica `X-Hub-Signature-256` en tiempo constante (RNF-SEG-10).
+pub fn verificar_firma_webhook(secreto: &[u8], cuerpo: &[u8], encabezado: &str) -> bool {
+    let Some(hex) = encabezado.trim().strip_prefix("sha256=") else {
+        return false;
+    };
+    let Some(firma) = decodificar_hex(hex) else {
+        return false;
+    };
+    let mut mac = mac_con(secreto);
+    mac.update(cuerpo);
+    mac.verify_slice(&firma).is_ok()
+}
+
+/// Compara dos secretos sin revelar por el tiempo cuántos bytes coinciden.
+pub fn iguales_en_tiempo_constante(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .fold(0_u8, |acumulado, (x, y)| acumulado | (x ^ y))
+            == 0
+}
+
+fn mac_con(clave: &[u8]) -> HmacSha256 {
+    // HMAC acepta claves de cualquier longitud: este `expect` no puede fallar.
+    #[allow(clippy::expect_used)]
+    HmacSha256::new_from_slice(clave).expect("HMAC acepta claves de cualquier longitud")
+}
+
+fn decodificar_hex(texto: &str) -> Option<Vec<u8>> {
+    if !texto.len().is_multiple_of(2) {
+        return None;
+    }
+    let digito = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    texto
+        .as_bytes()
+        .chunks(2)
+        .map(|par| Some(digito(par[0])? << 4 | digito(par[1])?))
+        .collect()
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn firma_y_verifica_webhooks_como_meta() {
+        // Vector calculado con: printf '{"a":1}' | openssl dgst -sha256 -hmac secreto
+        let firma = firma_webhook(b"secreto", br#"{"a":1}"#);
+        assert_eq!(
+            firma,
+            "sha256=87c6bf752c360faf8b89e2d9ed15dcc45e947f9ecdf9c4b637c8fa62d691c598"
+        );
+        assert!(verificar_firma_webhook(b"secreto", br#"{"a":1}"#, &firma));
+        assert!(verificar_firma_webhook(
+            b"secreto",
+            br#"{"a":1}"#,
+            &firma.to_uppercase().replace("SHA256=", "sha256=")
+        ));
+        assert!(!verificar_firma_webhook(b"otro", br#"{"a":1}"#, &firma));
+        assert!(!verificar_firma_webhook(b"secreto", br#"{"a":2}"#, &firma));
+        assert!(!verificar_firma_webhook(b"secreto", br#"{"a":1}"#, "sha256=zz"));
+        assert!(!verificar_firma_webhook(b"secreto", br#"{"a":1}"#, ""));
+        assert!(iguales_en_tiempo_constante(b"abc", b"abc"));
+        assert!(!iguales_en_tiempo_constante(b"abc", b"abd"));
+        assert!(!iguales_en_tiempo_constante(b"abc", b"ab"));
+    }
 
     #[test]
     fn verifica_solo_la_firma_correcta_del_mismo_mensaje() {

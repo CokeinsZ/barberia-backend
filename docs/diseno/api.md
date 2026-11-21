@@ -59,10 +59,10 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | Estado | `codigo` | Cuándo |
 |---|---|---|
 | 400 | `solicitud_invalida` | JSON mal formado o parámetros imposibles de interpretar. |
-| 401 | `no_autenticado`, `credenciales_invalidas` | Falta la sesión, o la sesión está vencida o revocada / correo o contraseña incorrectos. |
+| 401 | `no_autenticado`, `credenciales_invalidas`, `firma_invalida` | Falta la sesión, o la sesión está vencida o revocada / correo o contraseña incorrectos / la firma de un webhook de WhatsApp no coincide. |
 | 403 | `prohibido` / `origen_invalido` / `acceso_suspendido` | La política no lo permite / la verificación CSRF falló / la cuenta no tiene acceso al panel. |
 | 404 | `no_encontrado` | El recurso no existe o no es del barbero. |
-| 409 | `conflicto_horario`, `cita_ya_cobrada`, `estado_invalido`, `duplicado`, `correo_en_uso`, `ultimo_administrador`, `no_puede_desactivarse` | Reglas de concurrencia o de estado. |
+| 409 | `conflicto_horario`, `cita_ya_cobrada`, `cierre_existente`, `estado_invalido`, `duplicado`, `correo_en_uso`, `celular_en_uso`, `ultimo_administrador`, `no_puede_desactivarse` | Reglas de concurrencia o de estado. |
 | 410 | `enlace_vencido`, `codigo_vencido` | Token o código vencido. |
 | 422 | `validacion` | Reglas de negocio o de formato; `errores` trae `[{ "campo": "celular", "mensaje": "…" }]`. |
 | 429 | `demasiados_intentos` | Límite de intentos; incluye el encabezado `Retry-After`. |
@@ -99,14 +99,14 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | POST | `/publico/citas/gestion/{token}/cancelar` | Cancela hasta la hora de inicio; dentro del aviso mínimo queda marcada como tardía. | RF-RES-14, RN-09 |
 | POST | `/publico/citas/gestion/{token}/reprogramar` | `{ "inicio": "…", "barbero_id": null }`. Mismas reglas de disponibilidad. | RF-RES-15 |
 | PUT | `/publico/citas/gestion/{token}/recordatorios` | `{ "activos": false }`. | RF-RES-18 |
-| GET | `/publico/citas/gestion/{token}/calendario.ics` | Descarga la cita en formato ICS. | RF-RES-17 (Could) |
+| — | ~~`/publico/citas/gestion/{token}/calendario.ics`~~ | **Descartado (DA-18)**: solo enlace de Google Calendar (`calendario_google`). | RF-RES-17 (Could) |
 
 ### 2.2 Webhooks (módulo `notificaciones`)
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/webhooks/whatsapp` | Verificación de Meta (`hub.mode`, `hub.verify_token`, `hub.challenge`). |
-| POST | `/webhooks/whatsapp` | Estados de entrega y respuestas de botones. Se guarda el evento y se responde `200` de inmediato; el worker lo procesa (p. ej., «Confirmo» → cita confirmada). |
+| GET | `/webhooks/whatsapp` | Verificación de Meta (`hub.mode=subscribe`, `hub.verify_token`, `hub.challenge`): devuelve el reto solo con el token configurado (`403` si no). |
+| POST | `/webhooks/whatsapp` | Estados de entrega y respuestas de botones. Verifica `X-Hub-Signature-256` con el cuerpo exacto (`401 firma_invalida`, sin guardar nada); guarda el evento y responde `200` de inmediato; el worker lo procesa (estados que solo avanzan, aviso si falla un mensaje de cita, «Confirmo» → cita confirmada, «Cancelar cita» → cancelada). Sin secretos configurados, `404`. |
 
 ### 2.3 Autenticación y administradores (módulo `identidad`)
 
@@ -184,11 +184,11 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | POST | `/clientes` | Admin; Barbero | `{ nombre, celular, correo }`, desde el panel. | RF-CLI-01 |
 | GET | `/clientes/{id}` | Admin | Ficha: datos, métricas, autorizaciones y preferencias. Las últimas visitas salen de `GET /ventas?cliente_id=`. | RF-CLI-03 |
 | PUT | `/clientes/{id}` | Admin | Edita datos y preferencias. | RF-CLI-07 |
-| POST | `/clientes/{id}/anonimizacion` | Admin | Supresión por solicitud del titular; conserva las cifras. | RF-CLI-07, RNF-LEG-03 |
+| POST | `/clientes/{id}/anonimizacion` | Admin | `{ motivo }` → `204`. Supresión por solicitud del titular: borra los datos personales, revoca la autorización y conserva las cifras; `409 estado_invalido` si tiene citas por atender. | RF-CLI-07, RNF-LEG-03 |
 | GET | `/clientes/exportacion.xlsx` | Admin | Exportación (auditada). | RF-CLI-06 (Could) |
-| GET / POST | `/clientes/solicitudes-titular` | Admin | Registrar y consultar solicitudes de habeas data. | RNF-LEG-03 |
-| PATCH | `/clientes/solicitudes-titular/{id}` | Admin | `{ respuesta }`. | RNF-LEG-03 |
-| GET / PUT | `/clientes/configuracion-segmentos` | Admin | Umbrales de los segmentos. | RF-CFG-08 |
+| GET / POST | `/clientes/solicitudes-titular` | Admin | Registrar (`{ cliente_id, tipo: consulta \| actualizacion \| supresion, descripcion }`) y consultar (`?abiertas=true`) solicitudes de habeas data, con su plazo legal (`responder_antes_de`: 10 o 15 días hábiles). | RNF-LEG-03 |
+| PATCH | `/clientes/solicitudes-titular/{id}` | Admin | `{ respuesta }`, una sola vez. | RNF-LEG-03 |
+| GET / PUT | `/clientes/configuracion-segmentos` | Admin | Umbrales de los segmentos (pendiente: entrega 2). | RF-CFG-08 |
 
 ### 2.8 Agenda (módulo `agenda`)
 
@@ -204,10 +204,10 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | POST | `/agenda/citas/{id}/confirmar` | Admin | Confirmación manual (p. ej., por llamada). | RN-31 |
 | POST | `/agenda/citas/{id}/iniciar` | Admin; Barbero (propio) | Pasa a «En curso». | RF-AGE-10 |
 | POST | `/agenda/citas/{id}/inasistencia` | Admin; Barbero (propio) | Solo el día de la cita o después; publica `InasistenciaMarcada`. | RF-AGE-08, RF-PBA-03 |
-| POST | `/agenda/citas/{id}/recordatorio` | Admin; Barbero (propio) | Recordatorio manual por WhatsApp. | RF-NOT-05, RF-PBA-11 |
+| POST | `/agenda/citas/{id}/recordatorio` | Admin; Barbero (propio) | Recordatorio manual por WhatsApp (plantilla `recordatorio_cita`, con botones). `409` si el cliente los desactivó o si ya se envió uno hace menos de 15 minutos. | RF-NOT-05, RF-PBA-11 |
 | POST | `/agenda/conflictos` | Admin; Barbero (propio) | `{ barbero_id, horario_propuesto \| ausencia \| bloqueo }` → citas que quedarían afectadas, para mostrarlas antes de guardar. | RF-BAR-13, RF-PBA-09 |
-| POST | `/agenda/citas/reasignacion` | Admin | `{ cita_ids, barbero_destino_id }`. | RF-BAR-14 |
-| POST | `/agenda/citas/aviso-reprogramacion` | Admin | `{ cita_ids }`: pide a los clientes reprogramar por WhatsApp. | RF-BAR-14 |
+| POST | `/agenda/citas/reasignacion` | Admin | `{ cita_ids, barbero_destino_id }`: misma hora, otro barbero; todo o nada; cada cliente recibe el aviso con un enlace nuevo. | RF-BAR-14 |
+| POST | `/agenda/citas/aviso-reprogramacion` | Admin | `{ cita_ids }` → `{ avisadas }`: pide a los clientes elegir otra hora por WhatsApp, con un enlace nuevo. | RF-BAR-14 |
 | GET | `/agenda/pendientes-de-cierre?fecha=` | Admin | Citas pasadas sin venta ni inasistencia. | RF-AGE-12 |
 | GET / PUT | `/agenda/configuracion` | Admin | Reglas de agendamiento. | RF-CFG-02 |
 
@@ -215,17 +215,18 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 
 | Método | Ruta | Perfil | Descripción | Requisitos |
 |---|---|---|---|---|
-| GET | `/ventas/catalogos` | Admin; Barbero | Métodos de pago activos, descuentos (el barbero solo ve los permitidos a barberos) y motivos. | RF-VEN-05, RF-VEN-07 |
+| GET | `/ventas/catalogos` | Admin; Barbero | Métodos de pago activos, descuentos (el barbero solo ve los permitidos a barberos), motivos y propinas rápidas. | RF-VEN-05, RF-VEN-07 |
 | POST | `/ventas` | Admin; Barbero (propio) | Registra la venta (ver ejemplo en 3.2). Para el barbero, `barbero_id` se fija al suyo. | RF-VEN-01…09, RF-PBA-04 |
-| GET | `/ventas?fecha=&desde=&hasta=&barbero_id=&cliente_id=&pagina=` | Admin; Barbero (propio) | Ventas (últimas del día, historial del cliente). | RF-VEN-10, RF-PBA-05 |
+| GET | `/ventas?fecha=&desde=&hasta=&barbero_id=&cliente_id=&incluir_anuladas=&pagina=` | Admin; Barbero (propio) | Ventas (sin filtros: las de hoy; con `cliente_id`: su historial). | RF-VEN-10, RF-PBA-05 |
 | GET | `/ventas/{id}` | Admin; Barbero (propio) | Detalle con líneas y pagos. | RF-VEN-01 |
 | POST | `/ventas/{id}/anulacion` | Admin | `{ motivo }`; publica `VentaAnulada`. | RF-VEN-12 |
-| GET | `/ventas/caja?fecha=` | Admin | Caja del día: total neto, número de ventas, propinas y desglose por método. | RF-VEN-10 |
-| GET | `/ventas/resumen-barbero?fecha=` | Barbero (propio) | «Lo que llevas hoy»: comisión + propinas y ventas netas. | RF-PBA-05 |
-| GET | `/ventas/cierres?fecha=` | Admin | Cierre del día si existe, con lo esperado por método. | RF-VEN-11 |
-| POST | `/ventas/cierres` | Admin | `{ fecha, contado: [{ metodo_pago_id, monto }], observacion }`. | RF-VEN-11 |
-| PATCH | `/ventas/metodos-pago/{id}` | Admin | `{ activo }`. | RF-CFG-07 |
-| GET / POST / PUT | `/ventas/descuentos`, `/ventas/motivos-descuento` | Admin | Configuración de descuentos y motivos. | RF-VEN-14 (Could) |
+| GET | `/ventas/caja?fecha=&barbero_id=` | Admin | Caja del día: total neto, número de ventas, propinas, desglose por método (propinas incluidas), anuladas y las ventas del día (filtrables por barbero). | RF-VEN-10 |
+| GET | `/ventas/resumen-barbero?fecha=&barbero_id=` | Barbero (propio); Admin con `barbero_id` | «Lo que llevas hoy»: comisión + propinas y ventas netas. | RF-PBA-05 |
+| GET | `/ventas/cierres?fecha=` | Admin | Cierre del día (`404` si no hay), con lo esperado por método, lo contado y la diferencia. | RF-VEN-11 |
+| POST | `/ventas/cierres` | Admin | `{ fecha, contado: [{ metodo_pago_id, monto }], observacion }` → `201`. Lo esperado es una foto del momento; uno por día (`409 cierre_existente`). | RF-VEN-11 |
+| GET | `/ventas/metodos-pago` | Admin | Todos los métodos, activos o no. | RF-CFG-07 |
+| PATCH | `/ventas/metodos-pago/{id}` | Admin | `{ activo }`; siempre queda al menos uno activo. | RF-CFG-07 |
+| GET / POST / PUT | `/ventas/descuentos`, `/ventas/motivos-descuento` | Admin | Configuración de descuentos y motivos (pendiente: Could). | RF-VEN-14 (Could) |
 
 ### 2.10 Reportes y dashboard (módulo `reportes`, solo lectura)
 
@@ -247,9 +248,9 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 
 | Método | Ruta | Perfil | Descripción | Requisitos |
 |---|---|---|---|---|
-| GET | `/avisos?no_leidos=true` | Admin | Avisos internos. | RF-DAS-08 |
-| POST | `/avisos/{id}/leido` | Admin | Marca como leído. | RF-DAS-08 |
-| GET | `/mensajes?cita_id=&destinatario=&estado=` | Admin | Registro de mensajes y su estado. | RF-NOT-07 |
+| GET | `/avisos?no_leidos=true&pagina=` | Admin | Avisos internos: mensajes de citas que no se entregaron y citas afectadas por cambios de horario, bloqueos o ausencias (con `datos.cita_ids`). | RF-DAS-08, RF-NOT-07, RF-BAR-14 |
+| POST | `/avisos/{id}/leido` | Admin | Marca como leído (idempotente). | RF-DAS-08 |
+| GET | `/mensajes?destinatario=&estado=&canal=&plantilla=&pagina=` | Admin | Registro de mensajes y su estado, sin variables. Los de una cita salen en `GET /agenda/citas/{id}` (`mensajes`). | RF-NOT-07 |
 | GET | `/auditoria?entidad=&entidad_id=&desde=&hasta=&pagina=` | Admin | Historial de cambios (p. ej., de un barbero). | RF-BAR-16, RF-SIS-07 |
 
 ### 2.12 Sistema
@@ -263,14 +264,16 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 
 ### 2.13 Solo en el ambiente de pruebas E2E
 
-Solo existen con `DIAMANTE_PRUEBAS_E2E=true`, que `docker-compose.override.yml` y `docker-compose.e2e.yml` activan. En producción la configuración la rechaza y el proceso no arranca, así que la imagen de producción nunca los expone. Hoy está implementado `GET /_pruebas/mensajes` (fase 3); los demás llegan con el escenario base y Playwright.
+Solo existen con `DIAMANTE_PRUEBAS_E2E=true`, que `docker-compose.override.yml` y `docker-compose.e2e.yml` activan. En producción la configuración la rechaza y el proceso no arranca, así que la imagen de producción nunca los expone. Implementados: mensajes (fase 3), reloj y trabajos (fase 4); `reinicio` llega con el escenario base y Playwright.
+
+El reloj vive en la API. En el ambiente E2E la API ejecuta también las tareas del worker (`DIAMANTE_WORKER_EN_API=true`), así todo el sistema comparte la hora simulada; en desarrollo el worker aparte sigue con la hora real.
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/_pruebas/reinicio` | Vacía los datos y carga el escenario base. |
-| POST | `/_pruebas/reloj` | `{ "ahora": "2026-11-18T14:50:00-05:00" }`: fija el reloj del servidor. |
+| GET / POST / DELETE | `/_pruebas/reloj` | Consulta, fija (`{ "ahora": "2026-11-18T14:50:00-05:00" }`; desde ahí el tiempo sigue corriendo) o devuelve a la hora real el reloj del servidor. |
 | GET | `/_pruebas/mensajes?destinatario=3105559917` | Últimos 20 mensajes en cola para ese destinatario (plantilla y variables), por ejemplo para leer el código de verificación. |
-| POST | `/_pruebas/trabajos/ejecutar` | Ejecuta en el momento las tareas pendientes del worker (recordatorios). |
+| POST | `/_pruebas/trabajos/ejecutar` | Una pasada del worker en ese momento: webhooks, trabajos listos (recordatorios, mantenimiento), WhatsApp y correos. Devuelve el resumen. |
 
 ---
 
@@ -366,7 +369,7 @@ Los módulos no se llaman en círculo: cuando un módulo necesita reaccionar a l
 | `CitaReprogramada` / `CitaCancelada` | agenda | (ninguno aún) | Igual: el aviso al cliente se encola en la transacción del cambio | Misma transacción |
 | `InasistenciaMarcada` | agenda | clientes | Suma inasistencias a la proyección | Misma transacción |
 | `VentaRegistrada` | ventas | agenda, clientes | Cita «Atendida»; visitas, total gastado y barbero habitual | Misma transacción |
-| `VentaAnulada` | ventas | clientes | Recalcula las métricas del cliente | Misma transacción |
-| `HorarioCambiado` / `BloqueoCreado` / `AusenciaRegistrada` | barberos | agenda (fase 4) | Si hay citas afectadas, crea un aviso para el administrador. Desde la fase 3 el panel las consulta antes de guardar con `POST /agenda/conflictos` | Misma transacción |
-| `RespuestaWhatsAppRecibida` | notificaciones | agenda | «Confirmo» confirma la cita; «Cancelar» la cancela | Cola |
+| `VentaAnulada` | ventas | clientes | Resta la visita y el gasto; la última visita vigente viene en el evento | Misma transacción |
+| `HorarioCambiado` / `BloqueoCreado` / `AusenciaRegistrada` | barberos | agenda | Si hay citas afectadas, crea un aviso para el administrador (el panel también las consulta antes de guardar con `POST /agenda/conflictos`) | Misma transacción |
+| `RespuestaWhatsAppRecibida` | notificaciones | agenda | «Confirmo» confirma la cita; «Cancelar cita» la cancela. Se publica al procesar el webhook en el worker, en la transacción que lo marca procesado | Cola |
 | `AccesoRevocado` | barberos | (ninguno) | La cuenta la desactiva `barberos` por la fachada `CuentasPersonal` de `identidad`, en la misma transacción. La agenda no necesita reaccionar: lee el estado del barbero (retiro, ausencias, citas en línea) al calcular la disponibilidad | Misma transacción |

@@ -11,14 +11,16 @@ use catalogo::api::{CatalogoServicios, ServicioResumen};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeDelta, Timelike, Utc};
 use clientes::api::ClientesAgenda;
 use negocio::api::{CalendarioNegocio, DatosPublicos, TipoDiaEspecialDto};
-use notificaciones::api::{BuzonSalida, PlantillaWhatsApp, WhatsAppSaliente};
+use notificaciones::api::{Avisos, BuzonSalida, ConsultaMensajes, PlantillaWhatsApp, WhatsAppSaliente};
 use nucleo::eventos::{BusEventos, EventoDominio};
 use nucleo::identificadores::{IdBarbero, IdCita, IdCliente, IdServicio, IdUsuario};
 use nucleo::{Celular, Dinero, ErrorPersistencia, Reloj, TipoActor, Transacciones, ZONA_HORARIA};
 use plataforma::seguridad::Huella;
 use verificacion::api::Comprobantes;
 
-use super::dto::{BarberoCitaDto, CitaDto, ClienteCitaDto, EventoCitaDto, ServicioCitaDto};
+use super::dto::{
+    BarberoCitaDto, CitaDto, ClienteCitaDto, DetalleCitaDto, EventoCitaDto, MensajeCitaDto, ServicioCitaDto,
+};
 use super::errores::ErrorAgenda;
 use crate::dominio::cita::EstadoCita;
 use crate::dominio::configuracion::ConfiguracionAgenda;
@@ -72,6 +74,15 @@ pub(crate) struct EventoCita {
     pub(crate) tardio: bool,
     pub(crate) detalle: Option<String>,
     pub(crate) ahora: DateTime<Utc>,
+}
+
+/// Cita candidata a recordatorio: desde cuándo tiene su hora actual y qué recordatorios se
+/// enviaron ya para esa hora.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CitaParaRecordar {
+    pub(crate) cita: CitaGuardada,
+    pub(crate) vigente_desde: DateTime<Utc>,
+    pub(crate) recordatorios_enviados: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -143,6 +154,7 @@ pub(crate) trait RepositorioAgenda<C: Send>: Send + Sync + fmt::Debug {
         cita: IdCita,
         huella: &Huella,
         expira_en: DateTime<Utc>,
+        ahora: DateTime<Utc>,
     ) -> Result<(), ErrorPersistencia>;
     async fn por_enlace(
         &self,
@@ -158,6 +170,27 @@ pub(crate) trait RepositorioAgenda<C: Send>: Send + Sync + fmt::Debug {
         inicio: DateTime<Utc>,
         mensaje: i64,
     ) -> Result<(), ErrorPersistencia>;
+    /// Citas pendientes que empiezan en `(desde, hasta]` (candidatas a recordatorio).
+    async fn citas_para_recordar(
+        &self,
+        cx: &mut C,
+        desde: DateTime<Utc>,
+        hasta: DateTime<Utc>,
+    ) -> Result<Vec<CitaParaRecordar>, ErrorPersistencia>;
+    /// Mensajes relacionados con la cita: `(propósito, id del mensaje)`, del más antiguo al más nuevo.
+    async fn mensajes_de_cita(
+        &self,
+        cx: &mut C,
+        cita: IdCita,
+    ) -> Result<Vec<(String, i64)>, ErrorPersistencia>;
+    /// Citas «Sin confirmar», «Confirmada» o «En curso» del cliente.
+    async fn pendientes_de_cliente(&self, cx: &mut C, cliente: IdCliente) -> Result<i64, ErrorPersistencia>;
+    /// Cita y propósito del mensaje al que responde un cliente.
+    async fn cita_por_mensaje(
+        &self,
+        cx: &mut C,
+        mensaje: i64,
+    ) -> Result<Option<(IdCita, String)>, ErrorPersistencia>;
 }
 
 /// Lo que comparten los casos de uso.
@@ -171,6 +204,8 @@ pub(crate) struct Puertos<C: Send> {
     pub(crate) clientes: Arc<dyn ClientesAgenda<C>>,
     pub(crate) comprobantes: Arc<dyn Comprobantes<C>>,
     pub(crate) buzon: Arc<dyn BuzonSalida<C>>,
+    pub(crate) avisos: Arc<dyn Avisos<C>>,
+    pub(crate) mensajes: Arc<dyn ConsultaMensajes<C>>,
     pub(crate) bus: Arc<BusEventos<C>>,
     pub(crate) auditor: Arc<dyn auditoria::api::Auditor<C>>,
     pub(crate) reloj: Arc<dyn Reloj>,
@@ -542,6 +577,39 @@ impl<C: Send> Puertos<C> {
             .ok_or(ErrorAgenda::CitaNoEncontrada)
     }
 
+    /// Detalle para el personal: la cita con su cliente, su historial y el estado de sus
+    /// mensajes de WhatsApp.
+    pub(crate) async fn detalle(
+        &self,
+        cx: &mut C,
+        cita: CitaGuardada,
+    ) -> Result<DetalleCitaDto, ErrorAgenda> {
+        let historial = self.citas.historial(cx, cita.id).await?;
+        let vinculos = self.citas.mensajes_de_cita(cx, cita.id).await?;
+        let ids: Vec<i64> = vinculos.iter().map(|(_, id)| *id).collect();
+        let estados = self.mensajes.estados(cx, &ids).await?;
+        let mensajes = vinculos
+            .into_iter()
+            .filter_map(|(proposito, id)| {
+                estados.iter().find(|e| e.id == id).map(|e| MensajeCitaDto {
+                    proposito,
+                    plantilla: e.plantilla.clone(),
+                    estado: e.estado.clone(),
+                    intentos: e.intentos,
+                    ultimo_error: e.ultimo_error.clone(),
+                    creado_en: local(e.creado_en),
+                    enviado_en: e.enviado_en.map(local),
+                })
+            })
+            .collect();
+        let dto = self.dto(cx, cita, true).await?;
+        Ok(DetalleCitaDto {
+            cita: dto,
+            historial,
+            mensajes,
+        })
+    }
+
     /// Encola el WhatsApp para el cliente y lo relaciona con la cita.
     pub(crate) async fn avisar(
         &self,
@@ -574,6 +642,22 @@ impl<C: Send> Puertos<C> {
                 servicio: dto.servicio.nombre,
                 fecha,
                 hora,
+            },
+            "recordatorio_24h" | "recordatorio_2h" | "recordatorio_manual" => {
+                PlantillaWhatsApp::RecordatorioCita {
+                    nombre,
+                    servicio: dto.servicio.nombre,
+                    barbero: dto.barbero.nombre,
+                    fecha,
+                    hora,
+                }
+            }
+            "aviso_reprogramacion" => PlantillaWhatsApp::AvisoReprogramacion {
+                nombre,
+                servicio: dto.servicio.nombre,
+                fecha,
+                hora,
+                enlace: enlace.unwrap_or_default(),
             },
             "reprogramacion" => PlantillaWhatsApp::CitaReprogramada {
                 nombre,

@@ -3,3 +3,4 @@
 pub(crate) mod cita;
 pub(crate) mod configuracion;
 pub(crate) mod disponibilidad;
+pub(crate) mod recordatorios;

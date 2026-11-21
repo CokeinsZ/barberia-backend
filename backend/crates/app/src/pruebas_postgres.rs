@@ -1652,3 +1652,1288 @@ async fn reserva_en_linea_y_agenda_de_punta_a_punta() {
 
     base.eliminar().await;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Fase 4: WhatsApp simulado, recordatorios, webhooks firmados, avisos y trabajos
+// ---------------------------------------------------------------------------------------------
+
+const SECRETO_APP: &str = "secreto-de-pruebas-whatsapp";
+
+/// Webhook de Meta con el cuerpo exacto y, si se da, la firma.
+async fn webhook(app: &Router, cuerpo: &Value, firma: Option<String>) -> Respuesta {
+    let bytes = serde_json::to_vec(cuerpo).unwrap();
+    let mut peticion = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/webhooks/whatsapp")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(firma) = firma {
+        peticion = peticion.header("x-hub-signature-256", firma);
+    }
+    let respuesta = app
+        .clone()
+        .oneshot(peticion.body(Body::from(bytes)).unwrap())
+        .await
+        .unwrap();
+    let (partes, cuerpo) = respuesta.into_parts();
+    let bytes = cuerpo.collect().await.unwrap().to_bytes();
+    Respuesta {
+        estado: partes.status,
+        cabeceras: partes.headers,
+        json: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    }
+}
+
+fn firmado(cuerpo: &Value) -> Option<String> {
+    Some(plataforma::seguridad::firma_webhook(
+        SECRETO_APP.as_bytes(),
+        &serde_json::to_vec(cuerpo).unwrap(),
+    ))
+}
+
+/// Respuesta de un cliente a un botón del mensaje `wamid` (formato de Meta).
+fn boton(wamid: &str, carga: &str) -> Value {
+    json!({ "object": "whatsapp_business_account", "entry": [{ "id": "WABA", "changes": [{ "field": "messages",
+    "value": { "messaging_product": "whatsapp", "messages": [{
+        "from": "573001112233", "id": format!("wamid.respuesta.{carga}"), "timestamp": "1763500000", "type": "button",
+        "context": { "from": "573000000000", "id": wamid },
+        "button": { "payload": carga, "text": if carga == "confirmar" { "Confirmo" } else { "Cancelar cita" } }
+    }]}}]}]})
+}
+
+/// Mensajes de la cola para un celular (WhatsApp simulado), del más nuevo al más viejo.
+async fn mensajes_de(app: &Router, celular: &str) -> Vec<Value> {
+    let r = pedir(
+        app,
+        Method::GET,
+        &format!("/api/v1/_pruebas/mensajes?destinatario={celular}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    r.json.as_array().unwrap().clone()
+}
+
+async fn ejecutar_trabajos(app: &Router) -> Value {
+    let r = pedir(
+        app,
+        Method::POST,
+        "/api/v1/_pruebas/trabajos/ejecutar",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert!(r.json["errores"].as_array().unwrap().is_empty(), "{}", r.json);
+    r.json
+}
+
+async fn mover_reloj(app: &Router, ahora: &str) {
+    let r = pedir(
+        app,
+        Method::POST,
+        "/api/v1/_pruebas/reloj",
+        None,
+        Some(json!({ "ahora": ahora })),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+}
+
+#[tokio::test]
+async fn notificaciones_recordatorios_y_webhooks_de_punta_a_punta() {
+    let base = BaseDePrueba::crear(&migraciones::origenes()).await;
+    let configuracion = Configuracion::desde(|clave| match clave {
+        "DATABASE_URL" => Some("postgres://sin-uso".into()),
+        "DIAMANTE_URL_PUBLICA" => Some(SITIO.into()),
+        "DIAMANTE_PRUEBAS_E2E" => Some("true".into()),
+        "DIAMANTE_WHATSAPP_SECRETO_APP" => Some(SECRETO_APP.into()),
+        "DIAMANTE_WHATSAPP_TOKEN_VERIFICACION" => Some("token-de-verificacion".into()),
+        _ => None,
+    })
+    .unwrap();
+    let composicion = Composicion::con_reloj_de_pruebas(
+        base.pool.clone(),
+        Arc::new(nucleo::RelojDePruebas::default()),
+        &configuracion,
+    )
+    .unwrap();
+    let app = enrutador::construir(&composicion);
+
+    // El sistema vive en la hora del mockup: miércoles 18 de noviembre de 2026, 2:50 p. m.
+    mover_reloj(&app, "2026-11-18T14:50:00-05:00").await;
+    composicion
+        .identidad
+        .invitar_administrador(&Actor::Sistema, "laura@diamante.co", "Laura Gómez")
+        .await
+        .unwrap();
+    let token = token_del_correo(&base, "laura@diamante.co").await;
+    pedir(
+        &app,
+        Method::POST,
+        "/api/v1/auth/activacion",
+        None,
+        Some(json!({ "token": token, "contrasena": CLAVE })),
+    )
+    .await;
+    let (_, admin) = entrar(&app, "laura@diamante.co").await;
+    let servicio = json!({ "categoria_id": 1, "nombre": "Corte clásico", "descripcion": "Servicio.", "precio": 35_000, "duracion_min": 30 });
+    let corte = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/servicios",
+        Some(&admin),
+        Some(servicio),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let daniel = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/barberos",
+        Some(&admin),
+        Some(registro(
+            "Daniel",
+            "1020304050",
+            "daniel@diamante.co",
+            vec![json!(corte)],
+        )),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let felipe = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/barberos",
+        Some(&admin),
+        Some(registro(
+            "Felipe",
+            "1020304051",
+            "felipe@diamante.co",
+            vec![json!(corte)],
+        )),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let cita_panel = |celular: &str, nombre: &str, barbero: i64, inicio: &str| json!({ "cliente_nuevo": { "nombre": nombre, "celular": celular }, "servicio_id": corte, "barbero_id": barbero, "inicio": inicio });
+
+    // Cita de Andrea para mañana a las 3:00 p. m., agendada por la administradora (Sin confirmar).
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas",
+        Some(&admin),
+        Some(cita_panel(
+            "3001112233",
+            "Andrea Gómez",
+            daniel,
+            "2026-11-19T15:00:00-05:00",
+        )),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let cita = r.json["id"].as_i64().unwrap();
+    let andrea = r.json["cliente"]["id"].as_i64().unwrap();
+
+    // El worker envía la confirmación (simulada); aún no toca ningún recordatorio.
+    let pasada = ejecutar_trabajos(&app).await;
+    assert_eq!(pasada["whatsapp"]["enviados"], 1, "{pasada}");
+    let confirmacion = &mensajes_de(&app, "3001112233").await[0];
+    assert_eq!(
+        (
+            confirmacion["plantilla"].as_str(),
+            confirmacion["estado"].as_str()
+        ),
+        (Some("cita_confirmada"), Some("enviado"))
+    );
+    assert!(
+        confirmacion["id_proveedor"]
+            .as_str()
+            .unwrap()
+            .starts_with("wamid.simulado.")
+    );
+    assert!(
+        confirmacion["variables"]["enlace"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{SITIO}/cita/")),
+        "el simulador conserva las variables"
+    );
+
+    // E2E-NOT-01: a las 3:00 p. m. de hoy, dos pasadas envían un solo recordatorio de 24 h.
+    mover_reloj(&app, "2026-11-18T15:00:00-05:00").await;
+    ejecutar_trabajos(&app).await;
+    ejecutar_trabajos(&app).await;
+    let mensajes = mensajes_de(&app, "3001112233").await;
+    let recordatorios: Vec<&Value> = mensajes
+        .iter()
+        .filter(|m| m["plantilla"] == "recordatorio_cita")
+        .collect();
+    assert_eq!(recordatorios.len(), 1, "{mensajes:?}");
+    assert_eq!(recordatorios[0]["estado"], "enviado");
+    let wamid = recordatorios[0]["id_proveedor"].as_str().unwrap().to_owned();
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/agenda/citas/{cita}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    let propositos: Vec<(&str, &str)> = r.json["mensajes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["proposito"].as_str().unwrap(), m["estado"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        propositos,
+        [("confirmacion", "enviado"), ("recordatorio_24h", "enviado")],
+        "{}",
+        r.json
+    );
+
+    // E2E-NOT-03: firma inválida o ausente se rechaza y no se guarda nada.
+    let respuesta = boton(&wamid, "confirmar");
+    let r = webhook(&app, &respuesta, Some("sha256=00".into())).await;
+    assert_eq!(
+        (r.estado, r.json["codigo"].as_str()),
+        (StatusCode::UNAUTHORIZED, Some("firma_invalida"))
+    );
+    assert_eq!(
+        webhook(&app, &respuesta, None).await.estado,
+        StatusCode::UNAUTHORIZED
+    );
+    let guardados: i64 = sqlx::query_scalar("SELECT count(*) FROM notificaciones.evento_webhook")
+        .fetch_one(&base.pool)
+        .await
+        .unwrap();
+    assert_eq!(guardados, 0);
+    // Registro del webhook en Meta: devuelve el reto solo con el token correcto.
+    let verificacion = Request::get("/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=token-de-verificacion&hub.challenge=1158201444")
+        .body(Body::empty())
+        .unwrap();
+    let r = app.clone().oneshot(verificacion).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(
+        &r.into_body().collect().await.unwrap().to_bytes()[..],
+        b"1158201444"
+    );
+    let mala =
+        Request::get("/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=otro&hub.challenge=1")
+            .body(Body::empty())
+            .unwrap();
+    assert_eq!(
+        app.clone().oneshot(mala).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // E2E-NOT-02: «Confirmo» firmado confirma la cita (RN-31); los estados de entrega avanzan.
+    let r = webhook(&app, &respuesta, firmado(&respuesta)).await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    let leido = json!({ "entry": [{ "changes": [{ "value": { "statuses": [{ "id": wamid, "status": "read" }] } }] }] });
+    assert_eq!(
+        webhook(&app, &leido, firmado(&leido)).await.estado,
+        StatusCode::OK
+    );
+    let pasada = ejecutar_trabajos(&app).await;
+    assert_eq!(
+        (
+            pasada["webhooks"]["eventos"].as_u64(),
+            pasada["webhooks"]["respuestas"].as_u64()
+        ),
+        (Some(2), Some(1)),
+        "{pasada}"
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/agenda/citas/{cita}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["estado"], "confirmada", "{}", r.json);
+    let ultimo = r.json["historial"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (ultimo["evento"].as_str(), ultimo["actor"].as_str()),
+        (Some("confirmada"), Some("cliente"))
+    );
+    assert_eq!(r.json["mensajes"][1]["estado"], "leido");
+
+    // «Cancelar cita» desde el mismo recordatorio: queda cancelada y recibe el aviso.
+    let cancelar = boton(&wamid, "cancelar");
+    webhook(&app, &cancelar, firmado(&cancelar)).await;
+    ejecutar_trabajos(&app).await;
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/agenda/citas/{cita}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (r.json["estado"].as_str(), r.json["cancelacion_tardia"].as_bool()),
+        (Some("cancelada"), Some(false)),
+        "{}",
+        r.json
+    );
+    assert_eq!(
+        mensajes_de(&app, "3001112233").await[0]["plantilla"],
+        "cita_cancelada"
+    );
+
+    // Recordatorio manual (RF-NOT-05): uno cada 15 minutos y nunca a quien los desactivó.
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas",
+        Some(&admin),
+        Some(cita_panel(
+            "3002223344",
+            "Bruno Díaz",
+            daniel,
+            "2026-11-19T16:00:00-05:00",
+        )),
+    )
+    .await;
+    let cita_bruno = r.json["id"].as_i64().unwrap();
+    let bruno = r.json["cliente"]["id"].as_i64().unwrap();
+    let ruta_manual = format!("/api/v1/agenda/citas/{cita_bruno}/recordatorio");
+    let r = pedir(&app, Method::POST, &ruta_manual, Some(&admin), None).await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert!(
+        r.json["mensajes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["proposito"] == "recordatorio_manual")
+    );
+    let r = pedir(&app, Method::POST, &ruta_manual, Some(&admin), None).await;
+    assert_eq!(
+        (r.estado, r.json["codigo"].as_str()),
+        (StatusCode::CONFLICT, Some("estado_invalido")),
+        "{}",
+        r.json
+    );
+    let edicion = json!({ "nombre": "Bruno Díaz", "celular": "3002223344", "recordatorios_activos": false });
+    assert_eq!(
+        pedir(
+            &app,
+            Method::PUT,
+            &format!("/api/v1/clientes/{bruno}"),
+            Some(&admin),
+            Some(edicion)
+        )
+        .await
+        .estado,
+        StatusCode::OK
+    );
+    mover_reloj(&app, "2026-11-18T15:20:00-05:00").await;
+    let r = pedir(&app, Method::POST, &ruta_manual, Some(&admin), None).await;
+    assert_eq!(
+        r.json["title"], "El cliente desactivó los recordatorios.",
+        "{}",
+        r.json
+    );
+
+    // RF-BAR-14: la ausencia de Daniel deja la cita de Bruno por fuera → aviso, reasignación a
+    // Felipe y, además, se le pide al cliente que elija otra hora si prefiere.
+    let ausencia = json!({ "tipo": "incapacidad", "desde": "2026-11-19", "hasta": "2026-11-19", "observacion": "Gripe." });
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/barberos/{daniel}/ausencias"),
+        Some(&admin),
+        Some(ausencia),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/avisos?no_leidos=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let aviso = r.json["datos"][0].clone();
+    assert_eq!(
+        (aviso["tipo"].as_str(), aviso["titulo"].as_str()),
+        (
+            Some("ausencia_con_citas"),
+            Some("1 cita afectada por la ausencia de Daniel Ruiz")
+        ),
+        "{}",
+        r.json
+    );
+    assert_eq!(aviso["datos"]["cita_ids"], json!([cita_bruno]));
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas/reasignacion",
+        Some(&admin),
+        Some(json!({ "cita_ids": [cita_bruno], "barbero_destino_id": felipe })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json[0]["barbero"]["id"].as_i64()),
+        (StatusCode::OK, Some(felipe)),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas/aviso-reprogramacion",
+        Some(&admin),
+        Some(json!({ "cita_ids": [cita_bruno] })),
+    )
+    .await;
+    assert_eq!(r.json["avisadas"], 1, "{}", r.json);
+    let ultimos: Vec<String> = mensajes_de(&app, "3002223344")
+        .await
+        .iter()
+        .take(2)
+        .map(|m| m["plantilla"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ultimos, ["aviso_reprogramacion", "cita_reprogramada"]);
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/avisos/{}/leido", aviso["id"]),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert!(r.json["leido_en"].is_string(), "{}", r.json);
+
+    // E2E-NOT-04: con el WhatsApp caído (celular …0000) la cita se crea igual; el mensaje se
+    // reintenta (1, 2, 4 y 8 minutos) y al agotar los intentos la administradora ve un aviso.
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas",
+        Some(&admin),
+        Some(cita_panel(
+            "3009990000",
+            "Carlos Pérez",
+            felipe,
+            "2026-11-19T10:00:00-05:00",
+        )),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let pasada = ejecutar_trabajos(&app).await;
+    assert_eq!(pasada["whatsapp"]["reintentos"], 1, "{pasada}");
+    // (el reloj de pruebas sigue corriendo: cada hora deja 30 s de margen sobre el reintento)
+    for hora in ["15:21:30", "15:24:00", "15:28:30", "15:37:00"] {
+        mover_reloj(&app, &format!("2026-11-18T{hora}-05:00")).await;
+        ejecutar_trabajos(&app).await;
+    }
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/mensajes?destinatario=3009990000",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            r.json["datos"][0]["estado"].as_str(),
+            r.json["datos"][0]["intentos"].as_i64()
+        ),
+        (Some("fallido"), Some(5)),
+        "{}",
+        r.json
+    );
+    assert!(
+        r.json["datos"][0].get("variables").is_none(),
+        "el registro no expone variables"
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/avisos?no_leidos=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        r.json["datos"][0]["titulo"], "No se pudo entregar la confirmación de la cita de Carlos",
+        "{}",
+        r.json
+    );
+    assert_eq!(r.json["total"], 1, "el aviso leído ya no aparece");
+
+    // La cola de trabajos dejó constancia de lo programado (una vez por franja).
+    let trabajos: Vec<(String, String)> =
+        sqlx::query_as("SELECT tipo, estado::text FROM trabajos.trabajo ORDER BY id")
+            .fetch_all(&base.pool)
+            .await
+            .unwrap();
+    assert!(
+        trabajos.iter().all(|(_, estado)| estado == "completado"),
+        "{trabajos:?}"
+    );
+    assert!(trabajos.iter().any(|(tipo, _)| tipo == "sistema.mantenimiento"));
+    assert_eq!(
+        pedir(&app, Method::GET, "/api/v1/avisos", None, None)
+            .await
+            .estado,
+        StatusCode::UNAUTHORIZED
+    );
+    let _ = andrea;
+    base.eliminar().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fase 5: ventas, caja, métricas de clientes, panel del barbero y derechos del titular
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ventas_caja_y_clientes_de_punta_a_punta() {
+    let base = BaseDePrueba::crear(&migraciones::origenes()).await;
+    let configuracion = Configuracion::desde(|clave| match clave {
+        "DATABASE_URL" => Some("postgres://sin-uso".into()),
+        "DIAMANTE_URL_PUBLICA" => Some(SITIO.into()),
+        "DIAMANTE_PRUEBAS_E2E" => Some("true".into()),
+        _ => None,
+    })
+    .unwrap();
+    let composicion = Composicion::con_reloj_de_pruebas(
+        base.pool.clone(),
+        Arc::new(nucleo::RelojDePruebas::default()),
+        &configuracion,
+    )
+    .unwrap();
+    let app = enrutador::construir(&composicion);
+    mover_reloj(&app, "2026-11-18T10:00:00-05:00").await;
+    const HOY: &str = "2026-11-18";
+
+    composicion
+        .identidad
+        .invitar_administrador(&Actor::Sistema, "laura@diamante.co", "Laura Gómez")
+        .await
+        .unwrap();
+    let token = token_del_correo(&base, "laura@diamante.co").await;
+    pedir(
+        &app,
+        Method::POST,
+        "/api/v1/auth/activacion",
+        None,
+        Some(json!({ "token": token, "contrasena": CLAVE })),
+    )
+    .await;
+    let (_, admin) = entrar(&app, "laura@diamante.co").await;
+    let servicio = |nombre: &str, precio: i64| json!({ "categoria_id": 1, "nombre": nombre, "descripcion": "Servicio.", "precio": precio, "duracion_min": 30 });
+    let corte = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/servicios",
+        Some(&admin),
+        Some(servicio("Corte clásico", 35_000)),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let cejas = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/servicios",
+        Some(&admin),
+        Some(servicio("Diseño de cejas", 10_000)),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let santiago = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/barberos",
+        Some(&admin),
+        Some(registro(
+            "Santiago",
+            "1020304050",
+            "santiago@diamante.co",
+            vec![json!(corte), json!(cejas)],
+        )),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let mateo = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/barberos",
+        Some(&admin),
+        Some(registro(
+            "Mateo",
+            "1020304051",
+            "mateo@diamante.co",
+            vec![json!(corte)],
+        )),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let token = token_del_correo(&base, "santiago@diamante.co").await;
+    pedir(
+        &app,
+        Method::POST,
+        "/api/v1/auth/activacion",
+        None,
+        Some(json!({ "token": token, "contrasena": CLAVE })),
+    )
+    .await;
+    let (_, barbero) = entrar(&app, "santiago@diamante.co").await;
+
+    // La cita de hoy de Pablo Vélez, en curso (E2E-AGE-06).
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/agenda/citas",
+        Some(&admin),
+        Some(json!({ "cliente_nuevo": { "nombre": "Pablo Vélez", "celular": "3105559917" }, "servicio_id": corte, "barbero_id": santiago, "inicio": "2026-11-18T11:00:00-05:00" })),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let cita = r.json["id"].as_i64().unwrap();
+    let pablo = r.json["cliente"]["id"].as_i64().unwrap();
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/agenda/citas/{cita}/iniciar"),
+        Some(&barbero),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["estado"], "en_curso", "{}", r.json);
+
+    // Catálogos del formulario (RF-VEN-05, 07).
+    let r = pedir(&app, Method::GET, "/api/v1/ventas/catalogos", Some(&admin), None).await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    let metodo = |codigo: &str| {
+        r.json["metodos_pago"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["codigo"] == codigo)
+            .map(|m| m["id"].as_i64().unwrap())
+    };
+    let (efectivo, nequi) = (metodo("efectivo").unwrap(), metodo("nequi").unwrap());
+    assert_eq!(metodo("link_pago"), None, "el link de pago viene inactivo");
+    let diez = r.json["descuentos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["nombre"] == "10 %")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let motivo = r.json["motivos_descuento"][0]["id"].as_i64().unwrap();
+    assert_eq!(r.json["propinas_rapidas"], json!([2000, 5000, 10000]));
+
+    // E2E-VEN-01: desde la cita, agrega cejas, 10 % con motivo, propina libre y Nequi.
+    let venta = |pagos: Value| {
+        json!({ "cita_id": cita, "servicio_ids": [corte, cejas], "descuento": { "descuento_id": diez, "motivo_descuento_id": motivo },
+                "propina": 3500, "pagos": pagos })
+    };
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(venta(json!([{ "metodo_pago_id": nequi, "monto": 40000 }]))),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["errores"][0]["campo"].as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, Some("pagos")),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(venta(json!([{ "metodo_pago_id": nequi, "monto": 44000 }]))),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let v = &r.json;
+    assert_eq!(
+        (
+            v["numero_ticket"].as_i64(),
+            v["subtotal"].as_i64(),
+            v["descuento"]["valor"].as_i64(),
+            v["venta_neta"].as_i64(),
+            v["total_cobrado"].as_i64(),
+            v["comision_barbero"].as_i64()
+        ),
+        (
+            Some(1),
+            Some(45_000),
+            Some(4_500),
+            Some(40_500),
+            Some(44_000),
+            Some(20_250)
+        ),
+        "{v}"
+    );
+    assert_eq!(
+        (
+            v["barbero"]["id"].as_i64(),
+            v["cliente"]["id"].as_i64(),
+            v["cita_id"].as_i64()
+        ),
+        (Some(santiago), Some(pablo), Some(cita))
+    );
+    let venta_pablo = v["id"].as_i64().unwrap();
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/agenda/citas/{cita}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["estado"], "atendida", "RF-VEN-09");
+    assert_eq!(
+        r.json["historial"].as_array().unwrap().last().unwrap()["evento"],
+        "atendida"
+    );
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(venta(json!([{ "metodo_pago_id": nequi, "monto": 44000 }]))),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["codigo"].as_str()),
+        (StatusCode::CONFLICT, Some("cita_ya_cobrada"))
+    );
+
+    // E2E-CLI-02: la ficha suma la visita y el total gastado.
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/clientes/{pablo}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            r.json["visitas"].as_i64(),
+            r.json["total_gastado"].as_i64(),
+            r.json["ultima_visita"].as_str(),
+            r.json["ticket_promedio"].as_i64(),
+            r.json["barbero_habitual_id"].as_i64()
+        ),
+        (Some(1), Some(40_500), Some(HOY), Some(40_500), Some(santiago)),
+        "{}",
+        r.json
+    );
+
+    // E2E-VEN-02: cliente nuevo (se crea) y cliente ocasional (no suma a nadie); tickets seguidos.
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(json!({ "cliente": { "tipo": "nuevo", "nombre": "Diana Ruiz", "celular": "3001234567" }, "barbero_id": mateo, "servicio_ids": [corte],
+                     "pagos": [{ "metodo_pago_id": efectivo, "monto": 35000 }] })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["numero_ticket"].as_i64()),
+        (StatusCode::CREATED, Some(2)),
+        "{}",
+        r.json
+    );
+    let diana = r.json["cliente"]["id"].as_i64().unwrap();
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/clientes/buscar?q=diana",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json[0]["id"].as_i64(), Some(diana));
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(json!({ "cliente": { "tipo": "ocasional" }, "barbero_id": mateo, "servicio_ids": [corte], "propina": 2000,
+                     "pagos": [{ "metodo_pago_id": efectivo, "monto": 37000 }] })),
+    )
+    .await;
+    assert_eq!(
+        (r.json["numero_ticket"].as_i64(), r.json["cliente"].is_null()),
+        (Some(3), true),
+        "{}",
+        r.json
+    );
+
+    // E2E-VEN-03: el barbero no ofrece un servicio de la venta.
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&admin),
+        Some(json!({ "barbero_id": mateo, "servicio_ids": [corte, cejas], "pagos": [{ "metodo_pago_id": efectivo, "monto": 45000 }] })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["errores"][0]["mensaje"].as_str()),
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Some("Mateo Ruiz no realiza «Diseño de cejas».")
+        ),
+        "{}",
+        r.json
+    );
+
+    // E2E-VEN-04: Santiago registra a su nombre (aunque pida otro barbero), solo ve los
+    // descuentos permitidos a barberos, no anula, y «Lo que llevas hoy» suma comisión y propina.
+    sqlx::query("INSERT INTO ventas.descuento (nombre, tipo, valor, permitido_a_barberos, orden) VALUES ('20 %', 'porcentaje', 20, false, 9)")
+        .execute(&base.pool)
+        .await
+        .unwrap();
+    let veinte: i64 = sqlx::query_scalar("SELECT id::bigint FROM ventas.descuento WHERE nombre = '20 %'")
+        .fetch_one(&base.pool)
+        .await
+        .unwrap();
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/ventas/catalogos",
+        Some(&barbero),
+        None,
+    )
+    .await;
+    let nombres: Vec<&str> = r.json["descuentos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["nombre"].as_str().unwrap())
+        .collect();
+    assert_eq!(nombres, ["10 %", "15 %", "$5.000"]);
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&barbero),
+        Some(json!({ "barbero_id": mateo, "servicio_ids": [corte], "descuento": { "descuento_id": veinte, "motivo_descuento_id": motivo },
+                     "pagos": [{ "metodo_pago_id": efectivo, "monto": 28000 }] })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["errores"][0]["campo"].as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, Some("descuento")),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas",
+        Some(&barbero),
+        Some(json!({ "barbero_id": mateo, "servicio_ids": [cejas], "propina": 5000, "pagos": [{ "metodo_pago_id": nequi, "monto": 15000 }] })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["barbero"]["id"].as_i64()),
+        (StatusCode::CREATED, Some(santiago)),
+        "el barbero queda fijo: {}",
+        r.json
+    );
+    let venta_barbero = r.json["id"].as_i64().unwrap();
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/ventas/{venta_barbero}/anulacion"),
+        Some(&barbero),
+        Some(json!({ "motivo": "Me equivoqué de servicio" })),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::FORBIDDEN);
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/ventas/resumen-barbero",
+        Some(&barbero),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            r.json["numero_ventas"].as_i64(),
+            r.json["comision"].as_i64(),
+            r.json["propinas"].as_i64(),
+            r.json["total_a_recibir"].as_i64()
+        ),
+        (
+            Some(2),
+            Some(20_250 + 5_000),
+            Some(3_500 + 5_000),
+            Some(25_250 + 8_500)
+        ),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/ventas?barbero_id={mateo}"),
+        Some(&barbero),
+        None,
+    )
+    .await;
+    assert!(
+        r.json["datos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["barbero"]["id"] == santiago),
+        "solo ve lo suyo"
+    );
+    let ajena: i64 = sqlx::query_scalar("SELECT id FROM ventas.venta WHERE barbero_id = $1 LIMIT 1")
+        .bind(mateo)
+        .fetch_one(&base.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        pedir(
+            &app,
+            Method::GET,
+            &format!("/api/v1/ventas/{ajena}"),
+            Some(&barbero),
+            None
+        )
+        .await
+        .estado,
+        StatusCode::NOT_FOUND
+    );
+
+    // Caja del día (RF-VEN-10).
+    let r = pedir(&app, Method::GET, "/api/v1/ventas/caja", Some(&admin), None).await;
+    assert_eq!(
+        (
+            r.json["numero_ventas"].as_i64(),
+            r.json["venta_neta"].as_i64(),
+            r.json["propinas"].as_i64(),
+            r.json["total_cobrado"].as_i64()
+        ),
+        (
+            Some(4),
+            Some(40_500 + 35_000 + 35_000 + 10_000),
+            Some(3_500 + 2_000 + 5_000),
+            Some(44_000 + 35_000 + 37_000 + 15_000)
+        ),
+        "{}",
+        r.json
+    );
+    let por_metodo: Vec<(&str, i64)> = r.json["por_metodo"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["codigo"].as_str().unwrap(), m["total"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(por_metodo, [("efectivo", 72_000), ("nequi", 59_000)]);
+
+    // E2E-VEN-05: la anulación sale de la caja, queda auditada y corrige la ficha del cliente.
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/ventas/{venta_pablo}/anulacion"),
+        Some(&admin),
+        Some(json!({ "motivo": "Se cobró dos veces por error" })),
+    )
+    .await;
+    assert_eq!(
+        (
+            r.estado,
+            r.json["estado"].as_str(),
+            r.json["numero_ticket"].as_i64()
+        ),
+        (StatusCode::OK, Some("anulada"), Some(1)),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/ventas/{venta_pablo}/anulacion"),
+        Some(&admin),
+        Some(json!({ "motivo": "Otra vez" })),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CONFLICT);
+    let r = pedir(&app, Method::GET, "/api/v1/ventas/caja", Some(&admin), None).await;
+    assert_eq!(
+        (
+            r.json["numero_ventas"].as_i64(),
+            r.json["anuladas"].as_i64(),
+            r.json["total_cobrado"].as_i64()
+        ),
+        (Some(3), Some(1), Some(87_000)),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/clientes/{pablo}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            r.json["visitas"].as_i64(),
+            r.json["total_gastado"].as_i64(),
+            r.json["ultima_visita"].is_null()
+        ),
+        (Some(0), Some(0), true),
+        "{}",
+        r.json
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/auditoria?entidad=venta&entidad_id={venta_pablo}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["datos"][0]["accion"], "anular_venta", "{}", r.json);
+
+    // E2E-VEN-06: cierre con lo esperado por método (propinas incluidas) y la diferencia.
+    let cierre = json!({ "fecha": HOY, "contado": [{ "metodo_pago_id": efectivo, "monto": 70000 }, { "metodo_pago_id": nequi, "monto": 15000 }], "observacion": "Faltan $2.000 en efectivo." });
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas/cierres",
+        Some(&admin),
+        Some(cierre.clone()),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    let metodos: Vec<(i64, Option<i64>, Option<i64>)> = r.json["metodos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["esperado"].as_i64().unwrap(),
+                m["contado"].as_i64(),
+                m["diferencia"].as_i64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        metodos,
+        [
+            (72_000, Some(70_000), Some(-2_000)),
+            (15_000, Some(15_000), Some(0))
+        ]
+    );
+    assert_eq!(r.json["diferencia"], -2000);
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/ventas/cierres",
+        Some(&admin),
+        Some(cierre),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["codigo"].as_str()),
+        (StatusCode::CONFLICT, Some("cierre_existente"))
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/ventas/cierres?fecha={HOY}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["total_esperado"], 87000, "{}", r.json);
+
+    // RF-CFG-07: habilitar «Link de pago».
+    let link: i64 =
+        sqlx::query_scalar("SELECT id::bigint FROM ventas.metodo_pago WHERE codigo = 'link_pago'")
+            .fetch_one(&base.pool)
+            .await
+            .unwrap();
+    let r = pedir(
+        &app,
+        Method::PATCH,
+        &format!("/api/v1/ventas/metodos-pago/{link}"),
+        Some(&admin),
+        Some(json!({ "activo": true })),
+    )
+    .await;
+    assert_eq!(r.json["activo"], true, "{}", r.json);
+
+    // E2E-CLI-01: búsqueda sin tilde y por fragmento del celular con espacios.
+    for q in ["pablo%20velez", "555%2099"] {
+        let r = pedir(
+            &app,
+            Method::GET,
+            &format!("/api/v1/clientes/buscar?q={q}"),
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(r.json[0]["id"].as_i64(), Some(pablo), "{q}: {}", r.json);
+    }
+
+    // Derechos del titular (RNF-LEG-03) y E2E-CLI-04: anonimizar a Diana.
+    let r = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/clientes/solicitudes-titular",
+        Some(&admin),
+        Some(json!({ "cliente_id": diana, "tipo": "supresion", "descripcion": "Pidió por WhatsApp borrar sus datos." })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["responder_antes_de"].as_str()),
+        (StatusCode::CREATED, Some("2026-12-09")),
+        "15 días hábiles: {}",
+        r.json
+    );
+    let solicitud = r.json["id"].as_i64().unwrap();
+    let r = pedir(&app, Method::POST, "/api/v1/agenda/citas", Some(&admin), Some(json!({ "cliente_id": diana, "servicio_id": corte, "barbero_id": mateo, "inicio": "2026-11-19T10:00:00-05:00" }))).await;
+    let cita_diana = r.json["id"].as_i64().unwrap();
+    let anonimizar = format!("/api/v1/clientes/{diana}/anonimizacion");
+    let r = pedir(
+        &app,
+        Method::POST,
+        &anonimizar,
+        Some(&admin),
+        Some(json!({ "motivo": "Solicitud de supresión del titular" })),
+    )
+    .await;
+    assert_eq!(
+        (r.estado, r.json["codigo"].as_str()),
+        (StatusCode::CONFLICT, Some("estado_invalido")),
+        "tiene una cita por atender: {}",
+        r.json
+    );
+    pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/agenda/citas/{cita_diana}/cancelar"),
+        Some(&admin),
+        Some(json!({ "motivo": "solicitud_cliente", "avisar_cliente": false })),
+    )
+    .await;
+    let r = pedir(
+        &app,
+        Method::POST,
+        &anonimizar,
+        Some(&admin),
+        Some(json!({ "motivo": "Solicitud de supresión del titular" })),
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::NO_CONTENT, "{}", r.json);
+    assert!(
+        pedir(
+            &app,
+            Method::GET,
+            "/api/v1/clientes/buscar?q=diana",
+            Some(&admin),
+            None
+        )
+        .await
+        .json
+        .as_array()
+        .unwrap()
+        .is_empty()
+    );
+    assert_eq!(
+        pedir(
+            &app,
+            Method::GET,
+            &format!("/api/v1/clientes/{diana}"),
+            Some(&admin),
+            None
+        )
+        .await
+        .estado,
+        StatusCode::NOT_FOUND
+    );
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/ventas?cliente_id={diana}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (
+            r.json["total"].as_i64(),
+            r.json["datos"][0]["cliente"]["nombre"].as_str()
+        ),
+        (Some(1), Some("Cliente anonimizado")),
+        "las cifras se conservan: {}",
+        r.json
+    );
+    let (celular, nombre): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT celular::text, nombre FROM clientes.cliente WHERE id = $1")
+            .bind(diana)
+            .fetch_one(&base.pool)
+            .await
+            .unwrap();
+    assert_eq!((celular, nombre), (None, None));
+    let r = pedir(
+        &app,
+        Method::PATCH,
+        &format!("/api/v1/clientes/solicitudes-titular/{solicitud}"),
+        Some(&admin),
+        Some(json!({ "respuesta": "Datos suprimidos el 18/11/2026." })),
+    )
+    .await;
+    assert!(r.json["respondida_en"].is_string(), "{}", r.json);
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/clientes/solicitudes-titular?abiertas=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["total"], 0);
+
+    // El barbero no ve la caja ni los cierres.
+    assert_eq!(
+        pedir(&app, Method::GET, "/api/v1/ventas/caja", Some(&barbero), None)
+            .await
+            .estado,
+        StatusCode::FORBIDDEN
+    );
+    base.eliminar().await;
+}

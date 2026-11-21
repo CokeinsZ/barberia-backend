@@ -9,7 +9,8 @@ horario, servicios, ausencias, bloqueos, retiro, visibilidad, orden, foto y docu
 | Esquema de base de datos | `barberos` (ver `migraciones/`) |
 | Depende de | `identidad` (`CuentasPersonal`), `catalogo` (`CatalogoServicios`), `archivos` (`Archivos`), `negocio` (`ParametrosNegocio`), `auditoria` |
 | Implementa puertos de | `identidad` (`PerfilesBarberos`) y `catalogo` (`OferentesServicio`) |
-| Publica (crate `contratos`) | `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada`, `AccesoRevocado` (los usará `agenda` en la fase 3) |
+| Fachadas que ofrece | `EquipoAgenda` (franjas, ausencias, bloqueos y retiro, para `agenda`) y `EquipoVentas` (estado en la fecha, servicios y comisión vigente, para `ventas`) |
+| Publica (crate `contratos`) | `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada` (la agenda avisa a la administradora si dejan citas por fuera) y `AccesoRevocado` |
 
 ## Endpoints (`/api/v1`)
 

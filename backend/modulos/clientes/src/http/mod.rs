@@ -6,7 +6,7 @@ use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::NaiveDate;
 use nucleo::identificadores::IdCliente;
@@ -14,7 +14,7 @@ use nucleo::{Pagina, SolicitudPagina};
 use plataforma::http::{ActorAutenticado, Entrada, ErrorHttp, Parametros};
 use serde::Deserialize;
 
-use crate::aplicacion::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto};
+use crate::aplicacion::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto, SolicitudTitularDto};
 use crate::aplicacion::{CasosDeUso, SolicitudCliente};
 
 type Casos<C> = State<Arc<CasosDeUso<C>>>;
@@ -24,6 +24,15 @@ pub(crate) fn rutas<C: Send + 'static>(casos: Arc<CasosDeUso<C>>) -> Router {
         .route("/clientes", get(listar::<C>).post(crear::<C>))
         .route("/clientes/buscar", get(buscar::<C>))
         .route("/clientes/{id}", get(ficha::<C>).put(editar::<C>))
+        .route("/clientes/{id}/anonimizacion", post(anonimizar::<C>))
+        .route(
+            "/clientes/solicitudes-titular",
+            get(solicitudes::<C>).post(registrar_solicitud::<C>),
+        )
+        .route(
+            "/clientes/solicitudes-titular/{id}",
+            patch(responder_solicitud::<C>),
+        )
         .with_state(casos)
 }
 
@@ -119,4 +128,89 @@ async fn editar<C: Send + 'static>(
     Entrada(s): Entrada<ClienteSolicitud>,
 ) -> Result<Json<ClienteFichaDto>, ErrorHttp> {
     Ok(Json(casos.editar.ejecutar(&actor, id(ruta)?, s.into()).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnonimizacionSolicitud {
+    motivo: String,
+}
+
+/// Supresión a petición del titular (RF-CLI-07). `204` sin cuerpo.
+async fn anonimizar<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+    ruta: Result<Path<i64>, PathRejection>,
+    Entrada(s): Entrada<AnonimizacionSolicitud>,
+) -> Result<StatusCode, ErrorHttp> {
+    let Ok(Path(id)) = ruta else {
+        return Err(ErrorHttp::solicitud_invalida(
+            "El identificador debe ser un número.",
+        ));
+    };
+    casos.titular.anonimizar(&actor, IdCliente(id), &s.motivo).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FiltroSolicitudes {
+    #[serde(default)]
+    abiertas: bool,
+    pagina: Option<u32>,
+    por_pagina: Option<u32>,
+}
+
+async fn solicitudes<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Parametros(f): Parametros<FiltroSolicitudes>,
+) -> Result<Json<Pagina<SolicitudTitularDto>>, ErrorHttp> {
+    let defecto = SolicitudPagina::default();
+    let pagina = SolicitudPagina {
+        pagina: f.pagina.unwrap_or(defecto.pagina),
+        por_pagina: f.por_pagina.unwrap_or(defecto.por_pagina),
+    };
+    Ok(Json(casos.titular.solicitudes(&actor, f.abiertas, pagina).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NuevaSolicitudTitular {
+    cliente_id: Option<i64>,
+    /// `consulta`, `actualizacion` o `supresion`.
+    tipo: String,
+    descripcion: String,
+}
+
+async fn registrar_solicitud<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Entrada(s): Entrada<NuevaSolicitudTitular>,
+) -> Result<Response, ErrorHttp> {
+    let dto = casos
+        .titular
+        .registrar(&actor, s.cliente_id.map(IdCliente), &s.tipo, &s.descripcion)
+        .await?;
+    Ok((StatusCode::CREATED, Json(dto)).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RespuestaTitular {
+    respuesta: String,
+}
+
+async fn responder_solicitud<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+    ruta: Result<Path<i64>, PathRejection>,
+    Entrada(s): Entrada<RespuestaTitular>,
+) -> Result<Json<SolicitudTitularDto>, ErrorHttp> {
+    let Ok(Path(id)) = ruta else {
+        return Err(ErrorHttp::solicitud_invalida(
+            "El identificador debe ser un número.",
+        ));
+    };
+    Ok(Json(casos.titular.responder(&actor, id, &s.respuesta).await?))
 }

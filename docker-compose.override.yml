@@ -14,8 +14,12 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: desarrollo
-      # WhatsApp simulado: GET /api/v1/_pruebas/mensajes muestra los mensajes en cola (códigos).
+      # WhatsApp simulado y rutas de apoyo: /_pruebas/mensajes, /_pruebas/reloj y
+      # /_pruebas/trabajos/ejecutar (el reloj mueve solo la API; el worker usa la hora real).
       DIAMANTE_PRUEBAS_E2E: "true"
+      # Secreto de desarrollo para firmar webhooks de WhatsApp de prueba (Postman los firma).
+      DIAMANTE_WHATSAPP_SECRETO_APP: secreto-de-desarrollo-whatsapp
+      DIAMANTE_WHATSAPP_TOKEN_VERIFICACION: token-de-desarrollo
       # Servidor de desarrollo de Astro: destino de los enlaces de los correos y origen permitido.
       DIAMANTE_URL_PUBLICA: http://localhost:4321
       DIAMANTE_ORIGENES: http://localhost:8080

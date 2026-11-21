@@ -2,10 +2,14 @@
 //!
 //! Cola de salida de mensajes (patrón *outbox*): los demás módulos encolan con
 //! [`api::BuzonSalida`] **dentro de su transacción** y el worker los envía después. Así un
-//! correo nunca se envía por una operación que se revirtió, ni se pierde si el proveedor falla.
+//! mensaje nunca se envía por una operación que se revirtió, ni se pierde si el proveedor falla.
 //!
-//! Fase 1: correo por SMTP (invitaciones y recuperación de contraseña). Fase 4: WhatsApp,
-//! webhooks y avisos internos.
+//! - Correo por SMTP (invitaciones y recuperación de contraseña).
+//! - WhatsApp: plantillas, reintentos y, mientras no haya credenciales de Meta, un adaptador
+//!   simulado fuera de producción.
+//! - Webhooks firmados de WhatsApp: estados de entrega y respuestas de los botones, que se
+//!   publican como `RespuestaWhatsAppRecibida`.
+//! - Avisos internos para la administradora ([`api::Avisos`]).
 
 mod aplicacion;
 mod dominio;
@@ -15,7 +19,7 @@ mod modulo;
 
 pub mod api;
 
-pub use modulo::ModuloNotificaciones;
+pub use modulo::{DependenciasNotificaciones, ModuloNotificaciones};
 
 /// Migraciones del esquema `notificaciones`.
 pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

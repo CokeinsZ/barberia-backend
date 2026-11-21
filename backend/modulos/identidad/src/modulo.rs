@@ -35,6 +35,7 @@ pub struct DependenciasIdentidad {
 
 #[derive(Debug, Clone)]
 pub struct ModuloIdentidad {
+    pool: PgPool,
     casos: Arc<CasosDeUso<UnidadDeTrabajo>>,
     limites: Arc<Limites>,
 }
@@ -42,7 +43,7 @@ pub struct ModuloIdentidad {
 impl ModuloIdentidad {
     pub fn con_postgres(dependencias: DependenciasIdentidad) -> Self {
         let puertos = Puertos {
-            transacciones: Arc::new(TransaccionesPg::nuevas(dependencias.pool)),
+            transacciones: Arc::new(TransaccionesPg::nuevas(dependencias.pool.clone())),
             usuarios: Arc::new(RepositorioUsuariosPg),
             sesiones: Arc::new(RepositorioSesionesPg),
             tokens: Arc::new(RepositorioTokensPg),
@@ -54,9 +55,18 @@ impl ModuloIdentidad {
             url_publica: dependencias.url_publica,
         };
         Self {
+            pool: dependencias.pool,
             casos: Arc::new(CasosDeUso::nuevos(puertos)),
             limites: Arc::new(Limites::estandar()),
         }
+    }
+
+    /// Mantenimiento nocturno: sesiones y enlaces vencidos hace más de 30 días.
+    pub async fn limpiar(
+        &self,
+        ahora: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, nucleo::ErrorPersistencia> {
+        crate::infraestructura::postgres::limpiar(&self.pool, ahora).await
     }
 
     /// Rutas HTTP del módulo, para montarlas bajo `/api/v1`.
