@@ -33,13 +33,19 @@ RUN find crates modulos -name '*.rs' -exec touch {} + \
 # 3) Imagen final mínima, sin compilador y con un usuario sin privilegios.
 FROM debian:trixie-slim
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin diamante
+ && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin diamante \
+ && mkdir -p /datos/archivos \
+ && chown diamante:diamante /datos/archivos
 COPY --from=compilacion /diamante /app/diamante
 USER diamante
 WORKDIR /app
-ENV DIAMANTE_HTTP_DIRECCION=0.0.0.0:8080
+ENV DIAMANTE_HTTP_DIRECCION=0.0.0.0:8080 \
+    DIAMANTE_ARCHIVOS_DIR=/datos/archivos
+# Fotos y documentos. Un volumen nuevo hereda el dueño de esta carpeta (el usuario sin privilegios).
+VOLUME ["/datos/archivos"]
 EXPOSE 8080
 ENTRYPOINT ["/app/diamante"]
 CMD ["api"]

@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use auditoria::api::EntradaAuditoria;
-use notificaciones::api::{CorreoSaliente, PlantillaCorreo};
 use nucleo::{Actor, Correo, ErrorDeCampo, ErrorPersistencia};
-use plataforma::seguridad::generar_token;
 use serde_json::json;
 
 use super::{ENTIDAD_USUARIO, MODULO};
@@ -11,7 +9,7 @@ use crate::aplicacion::dto::InvitacionEmitida;
 use crate::aplicacion::errores::ErrorIdentidad;
 use crate::aplicacion::politicas::administrador_o_sistema;
 use crate::aplicacion::puertos::Puertos;
-use crate::dominio::{NombrePersona, PropositoToken};
+use crate::dominio::NombrePersona;
 
 /// RF-CFG-06: invitar a un administrador. Crea la cuenta sin contraseña y le envía el enlace
 /// para crearla (válido 7 días).
@@ -59,22 +57,8 @@ impl<C: Send> InvitarAdministrador<C> {
                 ErrorPersistencia::Duplicado { .. } => ErrorIdentidad::CorreoEnUso,
                 otro => otro.into(),
             })?;
-        let (token, huella) = generar_token()?;
-        let proposito = PropositoToken::Activacion;
-        p.tokens.emitir(&mut cx, id, proposito, &huella, ahora).await?;
-        let enlace = proposito.enlace(&p.url_publica, &token);
-        p.buzon
-            .encolar_correo(
-                &mut cx,
-                CorreoSaliente {
-                    destinatario: correo.clone(),
-                    plantilla: PlantillaCorreo::InvitacionPersonal {
-                        nombre: nombre.como_str().to_owned(),
-                        rol: "administrador".into(),
-                        enlace: enlace.clone(),
-                    },
-                },
-            )
+        let enlace = p
+            .enviar_invitacion(&mut cx, id, &correo, nombre.como_str(), "administrador")
             .await?;
         p.auditor
             .registrar(

@@ -34,6 +34,30 @@ impl ErrorDeCampo {
     }
 }
 
+/// Acumula errores de campo para informarlos todos de una vez (la interfaz los muestra junto a
+/// cada campo).
+#[derive(Debug, Default)]
+pub struct Validacion(Vec<ErrorDeCampo>);
+
+impl Validacion {
+    pub fn error(&mut self, campo: &str, mensaje: impl Into<String>) {
+        self.0.push(ErrorDeCampo::nuevo(campo, mensaje));
+    }
+
+    pub fn es_valida(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `Ok(valor())` si no hubo errores; si no, todos los errores de campo.
+    pub fn terminar<T>(self, valor: impl FnOnce() -> T) -> Result<T, Vec<ErrorDeCampo>> {
+        if self.0.is_empty() {
+            Ok(valor())
+        } else {
+            Err(self.0)
+        }
+    }
+}
+
 /// Error que puede salir de un caso de uso. Tiene un código estable (p. ej. `conflicto_horario`)
 /// que el frontend puede usar, y un mensaje (`Display`) pensado para la persona usuaria.
 pub trait ErrorDeAplicacion: std::error::Error + Send + Sync + 'static {

@@ -1,11 +1,22 @@
 //! # Módulo `verificacion`
 //!
-//! Códigos de verificación por WhatsApp y comprobantes de un solo uso.
+//! Verifica el celular de quien reserva en línea (RF-RES-09, RNF-SEG-06): un código de 4 dígitos
+//! por WhatsApp que vence en 10 minutos, admite 5 intentos y solo se puede reenviar tras 60
+//! segundos. En la base solo queda su HMAC con la clave del servidor. Al acertar entrega un
+//! **comprobante** de un solo uso (30 minutos) que `agenda` consume al crear la cita.
 //!
-//! **Estado**: fase 0 — el esquema `verificacion` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 3 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! Los datos del cliente conocido se muestran **después** de verificar (RF-RES-08); los aporta el
+//! puerto [`api::ClientesConocidos`].
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod dominio;
+mod http;
+mod infraestructura;
+mod modulo;
 
-/// Migraciones del esquema `verificacion`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub mod api;
+
+pub use modulo::{DependenciasVerificacion, ModuloVerificacion};
+
+/// Migraciones del esquema `verificacion`.
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

@@ -38,3 +38,7 @@ identificador!(IdCita);
 identificador!(IdVenta);
 identificador!(IdArchivo);
 identificador!(IdDiaEspecial);
+identificador!(IdCategoria);
+identificador!(IdAusencia);
+identificador!(IdBloqueo);
+identificador!(IdDocumento);

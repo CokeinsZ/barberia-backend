@@ -37,3 +37,16 @@ pub struct InvitacionEmitida {
     pub usuario: IdUsuario,
     pub enlace: String,
 }
+
+/// Cuenta del panel de una persona del personal, vista desde otro módulo (p. ej. la ficha del
+/// barbero).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CuentaPersonalDto {
+    pub usuario: IdUsuario,
+    pub correo: String,
+    /// La cuenta está activa (puede entrar si ya creó su contraseña).
+    pub acceso_panel: bool,
+    /// Invitada que aún no ha creado su contraseña.
+    pub pendiente_activacion: bool,
+    pub ultimo_acceso_en: Option<DateTime<Utc>>,
+}

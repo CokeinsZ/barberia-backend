@@ -25,6 +25,10 @@ use tower::ServiceExt;
 
 /// `auditoria.registro` referencia a `identidad.usuario`.
 static MIGRACIONES_IDENTIDAD: sqlx::migrate::Migrator = sqlx::migrate!("../identidad/migraciones");
+// El horario de atención sale de la vista publicada de `barberos` (que referencia a `archivos` y `catalogo`).
+static MIGRACIONES_ARCHIVOS: sqlx::migrate::Migrator = sqlx::migrate!("../archivos/migraciones");
+static MIGRACIONES_CATALOGO: sqlx::migrate::Migrator = sqlx::migrate!("../catalogo/migraciones");
+static MIGRACIONES_BARBEROS: sqlx::migrate::Migrator = sqlx::migrate!("../barberos/migraciones");
 
 /// Sesiones de prueba: el token dice quién es.
 #[derive(Debug)]
@@ -70,6 +74,18 @@ impl Escenario {
             OrigenMigraciones {
                 modulo: "auditoria",
                 migraciones: &auditoria::MIGRACIONES,
+            },
+            OrigenMigraciones {
+                modulo: "archivos",
+                migraciones: &MIGRACIONES_ARCHIVOS,
+            },
+            OrigenMigraciones {
+                modulo: "catalogo",
+                migraciones: &MIGRACIONES_CATALOGO,
+            },
+            OrigenMigraciones {
+                modulo: "barberos",
+                migraciones: &MIGRACIONES_BARBEROS,
             },
         ])
         .await;
@@ -310,5 +326,144 @@ async fn no_se_registran_dias_en_el_pasado() {
         .await;
     assert_eq!(r.estado, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(r.json["errores"][0]["campo"], "fecha");
+    e.base.eliminar().await;
+}
+
+#[tokio::test]
+async fn festivos_politicas_y_horario_de_atencion() {
+    let e = Escenario::nuevo().await;
+
+    // Festivos de 2027 (el reloj está en noviembre de 2026): los 18, y repetir no duplica.
+    let r = e
+        .pedir(
+            Method::POST,
+            "/api/v1/negocio/dias-especiales/festivos/2027",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json["creados"].as_array().unwrap().len(), 18);
+    let r = e
+        .pedir(
+            Method::POST,
+            "/api/v1/negocio/dias-especiales/festivos/2027",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (
+            r.json["creados"].as_array().unwrap().len(),
+            r.json["omitidos"].as_u64()
+        ),
+        (0, Some(18))
+    );
+
+    // Editar uno precargado lo vuelve manual.
+    let r = e
+        .pedir(
+            Method::GET,
+            "/api/v1/negocio/dias-especiales?desde=2027-01-01&hasta=2027-01-31",
+            Some("barbero"),
+            None,
+        )
+        .await;
+    let reyes = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["fecha"] == "2027-01-11")
+        .unwrap()
+        .clone();
+    assert_eq!(reyes["automatico"], true);
+    let cambios = json!({ "fecha": "2027-01-11", "nombre": "Reyes (cerramos temprano)", "tipo": "cierre_temprano", "hora_cierre": "14:00:00" });
+    let r = e
+        .pedir(
+            Method::PUT,
+            &format!("/api/v1/negocio/dias-especiales/{}", reyes["id"]),
+            Some("admin"),
+            Some(cambios),
+        )
+        .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        (r.json["tipo"].as_str(), r.json["automatico"].as_bool()),
+        (Some("cierre_temprano"), Some(false))
+    );
+
+    // Políticas: publicar, repetir la versión (422) y listar con la vigente.
+    let politica = json!({ "tipo": "tratamiento_datos", "version": "2026.1", "url": "/legal/tratamiento-de-datos", "vigente_desde": "2026-01-01T00:00:00Z" });
+    let r = e
+        .pedir(
+            Method::POST,
+            "/api/v1/negocio/politicas",
+            Some("admin"),
+            Some(politica.clone()),
+        )
+        .await;
+    assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+    assert_eq!(
+        e.pedir(
+            Method::POST,
+            "/api/v1/negocio/politicas",
+            Some("admin"),
+            Some(politica)
+        )
+        .await
+        .estado,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let r = e
+        .pedir(Method::GET, "/api/v1/negocio/politicas", Some("admin"), None)
+        .await;
+    assert_eq!(
+        (r.json[0]["version"].as_str(), r.json[0]["vigente"].as_bool()),
+        (Some("2026.1"), Some(true))
+    );
+    assert_eq!(
+        e.pedir(Method::GET, "/api/v1/negocio/politicas", Some("barbero"), None)
+            .await
+            .estado,
+        StatusCode::FORBIDDEN
+    );
+
+    // Horario de atención: de la franja más temprana a la más tardía de los barberos vigentes.
+    sqlx::raw_sql(
+        "INSERT INTO barberos.barbero (usuario_id, tipo_documento, numero_documento, nombres, apellidos, fecha_nacimiento,
+                                       celular, especialidad, fecha_ingreso, tipo_vinculacion, porcentaje_comision)
+         VALUES (2, 'CC', '1020304050', 'Santiago', 'Ruiz', '1995-03-02', '3105559917', 'Fade', '2025-01-15', 'prestacion_servicios', 50);
+         INSERT INTO identidad.usuario (correo, rol) VALUES ('mateo@diamante.co', 'barbero');
+         INSERT INTO barberos.barbero (usuario_id, tipo_documento, numero_documento, nombres, apellidos, fecha_nacimiento,
+                                       celular, especialidad, fecha_ingreso, tipo_vinculacion, porcentaje_comision, fecha_retiro, motivo_retiro)
+         VALUES (3, 'CC', '1020304051', 'Mateo', 'Gil', '1990-03-02', '3105559918', 'Barba', '2024-01-15', 'prestacion_servicios', 50,
+                 '2026-01-31', 'renuncia_voluntaria');
+         INSERT INTO barberos.franja_horaria (barbero_id, dia_semana, hora_inicio, hora_fin) VALUES
+           (1, 1, '09:00', '13:00'), (1, 1, '14:00', '19:00'), (1, 6, '08:00', '16:00'),
+           (2, 1, '06:00', '22:00');",
+    )
+    .execute(&e.base.pool)
+    .await
+    .unwrap();
+    let r = e
+        .pedir(
+            Method::GET,
+            "/api/v1/negocio/horario-atencion",
+            Some("barbero"),
+            None,
+        )
+        .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        (r.json[0]["abre"].as_str(), r.json[0]["cierra"].as_str()),
+        (Some("09:00:00"), Some("19:00:00")),
+        "el retirado no cuenta"
+    );
+    assert_eq!(r.json[5]["abre"], "08:00:00");
+    assert_eq!(
+        (r.json[6]["nombre"].as_str(), r.json[6]["abierto"].as_bool()),
+        (Some("Domingo"), Some(false))
+    );
     e.base.eliminar().await;
 }

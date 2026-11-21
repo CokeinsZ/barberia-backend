@@ -15,6 +15,9 @@ pub struct ErrorHttp {
     detalle: Option<String>,
     errores: Vec<ErrorDeCampo>,
     reintentar_en: Option<u64>,
+    /// Miembros adicionales del *Problem Details* (RFC 9457, sección 3.2), p. ej. `alternativas`.
+    /// En una caja: casi ningún error lleva extensiones y así `ErrorHttp` sigue siendo pequeño.
+    extensiones: Option<Box<serde_json::Map<String, serde_json::Value>>>,
 }
 
 /// Estado HTTP de cada categoría de error (tabla de `docs/diseno/api.md`, sección 1.3).
@@ -40,7 +43,16 @@ impl ErrorHttp {
             detalle: None,
             errores: Vec::new(),
             reintentar_en: None,
+            extensiones: None,
         }
+    }
+
+    /// Agrega un miembro propio del problema (p. ej. las horas alternativas de un conflicto).
+    pub fn con_extension(mut self, clave: &str, valor: serde_json::Value) -> Self {
+        self.extensiones
+            .get_or_insert_with(Default::default)
+            .insert(clave.to_owned(), valor);
+        self
     }
 
     pub fn con_detalle(mut self, detalle: impl Into<String>) -> Self {
@@ -112,6 +124,7 @@ impl<E: ErrorDeAplicacion> From<E> for ErrorHttp {
             detalle: None,
             errores: error.errores_de_campo(),
             reintentar_en: error.reintentar_en_segundos(),
+            extensiones: None,
         }
     }
 }
@@ -127,6 +140,8 @@ struct Problema<'a> {
     detail: Option<&'a str>,
     #[serde(skip_serializing_if = "<[ErrorDeCampo]>::is_empty")]
     errores: &'a [ErrorDeCampo],
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    extensiones: Option<&'a serde_json::Map<String, serde_json::Value>>,
 }
 
 impl IntoResponse for ErrorHttp {
@@ -138,6 +153,7 @@ impl IntoResponse for ErrorHttp {
             codigo: self.codigo,
             detail: self.detalle.as_deref(),
             errores: &self.errores,
+            extensiones: self.extensiones.as_deref(),
         };
         let mut respuesta = (self.estado, Json(cuerpo)).into_response();
         respuesta.headers_mut().insert(

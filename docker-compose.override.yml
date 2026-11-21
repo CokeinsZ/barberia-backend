@@ -14,6 +14,8 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: desarrollo
+      # WhatsApp simulado: GET /api/v1/_pruebas/mensajes muestra los mensajes en cola (códigos).
+      DIAMANTE_PRUEBAS_E2E: "true"
       # Servidor de desarrollo de Astro: destino de los enlaces de los correos y origen permitido.
       DIAMANTE_URL_PUBLICA: http://localhost:4321
       DIAMANTE_ORIGENES: http://localhost:8080

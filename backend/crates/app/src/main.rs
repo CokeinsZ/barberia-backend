@@ -7,6 +7,7 @@
 //! - `diamante crear-administrador <correo> <nombre>`: invita al primer administrador de una
 //!   instalación nueva y muestra el enlace de activación.
 
+mod adaptadores;
 mod administracion;
 mod composicion;
 mod enrutador;

@@ -7,15 +7,28 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+archivos.workspace = true
 async-trait.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+catalogo.workspace = true
+chrono.workspace = true
+contratos.workspace = true
 identidad.workspace = true
+negocio.workspace = true
 nucleo.workspace = true
 plataforma.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
+notificaciones.workspace = true
 plataforma = { workspace = true, features = ["pruebas"] }
 tokio.workspace = true
+tower.workspace = true
 
 [lints]
 workspace = true

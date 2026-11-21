@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use auditoria::api::{Auditor, EntradaAuditoria};
 use chrono::{DateTime, TimeDelta, Utc};
-use notificaciones::api::{BuzonSalida, CorreoSaliente, PlantillaCorreo};
+use notificaciones::api::{BuzonSalida, CorreoSaliente, PlantillaCorreo, WhatsAppSaliente};
 use nucleo::identificadores::{IdBarbero, IdUsuario};
 use nucleo::{Actor, Correo, ErrorPersistencia, RelojControlado, SinTransaccion};
 use plataforma::seguridad::{Huella, huella_token};
 
 use super::CasosDeUso;
 use super::comandos::SolicitudInicioSesion;
-use super::dto::AdministradorDto;
+use super::dto::{AdministradorDto, CuentaPersonalDto};
 use super::errores::ErrorIdentidad;
 use super::puertos::{
     Credenciales, NuevaSesion, Puertos, RepositorioSesiones, RepositorioTokens, RepositorioUsuarios,
@@ -145,6 +145,75 @@ impl RepositorioUsuarios<()> for Usuarios {
             .0
             .activo = activo;
         Ok(())
+    }
+    async fn crear_barbero(
+        &self,
+        _: &mut (),
+        correo: &Correo,
+        activo: bool,
+        _: DateTime<Utc>,
+    ) -> Result<IdUsuario, ErrorPersistencia> {
+        let mut filas = self.0.lock().unwrap();
+        if filas
+            .iter()
+            .any(|(u, _)| u.correo.como_str().eq_ignore_ascii_case(correo.como_str()))
+        {
+            return Err(ErrorPersistencia::Duplicado {
+                restriccion: "usuario_correo_uk".into(),
+            });
+        }
+        let id = IdUsuario(i64::try_from(filas.len()).unwrap() + 1);
+        filas.push((
+            Usuario {
+                id,
+                correo: correo.clone(),
+                rol: Rol::Barbero,
+                nombre_administrador: None,
+                hash_contrasena: None,
+                activo,
+                intentos_fallidos: 0,
+                bloqueado_hasta: None,
+            },
+            None,
+        ));
+        Ok(id)
+    }
+    async fn cambiar_correo(
+        &self,
+        _: &mut (),
+        id: IdUsuario,
+        correo: &Correo,
+    ) -> Result<(), ErrorPersistencia> {
+        let mut filas = self.0.lock().unwrap();
+        if filas
+            .iter()
+            .any(|(u, _)| u.id != id && u.correo.como_str().eq_ignore_ascii_case(correo.como_str()))
+        {
+            return Err(ErrorPersistencia::Duplicado {
+                restriccion: "usuario_correo_uk".into(),
+            });
+        }
+        filas.iter_mut().find(|(u, _)| u.id == id).unwrap().0.correo = correo.clone();
+        Ok(())
+    }
+    async fn resumen_cuenta(
+        &self,
+        _: &mut (),
+        id: IdUsuario,
+    ) -> Result<Option<CuentaPersonalDto>, ErrorPersistencia> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(u, _)| u.id == id)
+            .map(|(u, acceso)| CuentaPersonalDto {
+                usuario: u.id,
+                correo: u.correo.to_string(),
+                acceso_panel: u.activo,
+                pendiente_activacion: u.hash_contrasena.is_none(),
+                ultimo_acceso_en: *acceso,
+            }))
     }
 }
 
@@ -338,6 +407,9 @@ impl BuzonSalida<()> for Buzon {
     async fn encolar_correo(&self, _: &mut (), correo: CorreoSaliente) -> Result<(), ErrorPersistencia> {
         self.0.lock().unwrap().push(correo);
         Ok(())
+    }
+    async fn encolar_whatsapp(&self, _: &mut (), _: WhatsAppSaliente) -> Result<i64, ErrorPersistencia> {
+        Ok(0)
     }
 }
 
@@ -856,6 +928,113 @@ async fn desactivar_un_administrador_cierra_sus_sesiones() {
     };
     assert!(matches!(
         e.casos.listar_administradores.ejecutar(&barbero).await,
+        Err(ErrorIdentidad::Prohibido)
+    ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fachada de cuentas (la usa el módulo `barberos`)
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn crea_la_cuenta_de_un_barbero_y_la_invita_solo_si_tiene_acceso() {
+    use crate::api::CuentasPersonal;
+    let e = Escenario::nuevo();
+    let cuentas = e.casos.cuentas.clone();
+    let correo = Correo::nuevo("andres@diamante.co").unwrap();
+    let sin_acceso = cuentas
+        .crear_cuenta_barbero(&mut (), &LAURA, &correo, "Andrés Mora", false)
+        .await
+        .unwrap();
+    assert!(e.buzon.0.lock().unwrap().is_empty());
+    let cuenta = cuentas.cuenta(&mut (), sin_acceso).await.unwrap().unwrap();
+    assert_eq!((cuenta.acceso_panel, cuenta.pendiente_activacion), (false, true));
+
+    let repetido = cuentas
+        .crear_cuenta_barbero(
+            &mut (),
+            &LAURA,
+            &Correo::nuevo("ANDRES@diamante.co").unwrap(),
+            "Otro",
+            true,
+        )
+        .await;
+    assert!(matches!(repetido, Err(ErrorIdentidad::CorreoEnUso)));
+
+    // Darle acceso lo invita; con el enlace crea su contraseña y entra.
+    cuentas
+        .cambiar_acceso(&mut (), &LAURA, sin_acceso, true, "Andrés Mora")
+        .await
+        .unwrap();
+    let token = e.token_del_ultimo_correo();
+    e.casos
+        .activar_cuenta
+        .ejecutar(&token, CLAVE.into())
+        .await
+        .unwrap();
+    e.perfiles.0.lock().unwrap().insert(
+        sin_acceso,
+        PerfilBarbero {
+            barbero: IdBarbero(8),
+            nombre: "Andrés Mora".into(),
+            puede_acceder: true,
+        },
+    );
+    let sesion = e.entrar("andres@diamante.co", CLAVE).await.unwrap();
+
+    // Quitarle el acceso cierra su sesión y ya no puede entrar.
+    cuentas
+        .cambiar_acceso(&mut (), &LAURA, sin_acceso, false, "Andrés Mora")
+        .await
+        .unwrap();
+    assert_eq!(e.actor(&sesion).await, None);
+    assert!(matches!(
+        e.entrar("andres@diamante.co", CLAVE).await,
+        Err(ErrorIdentidad::AccesoSuspendido)
+    ));
+    assert!(e.auditado("crear_cuenta_barbero") && e.auditado("dar_acceso") && e.auditado("quitar_acceso"));
+}
+
+#[tokio::test]
+async fn cambiar_el_correo_reenvia_la_invitacion_pendiente() {
+    use crate::api::CuentasPersonal;
+    let e = Escenario::nuevo();
+    let cuentas = e.casos.cuentas.clone();
+    let id = cuentas
+        .crear_cuenta_barbero(
+            &mut (),
+            &LAURA,
+            &Correo::nuevo("andres@diamante.co").unwrap(),
+            "Andrés",
+            true,
+        )
+        .await
+        .unwrap();
+    let nuevo = Correo::nuevo("andres.mora@diamante.co").unwrap();
+    cuentas
+        .cambiar_correo(&mut (), &LAURA, id, &nuevo, "Andrés")
+        .await
+        .unwrap();
+    let ultimo = e.buzon.0.lock().unwrap().last().unwrap().destinatario.clone();
+    assert_eq!(ultimo, nuevo);
+    assert!(matches!(
+        cuentas
+            .cambiar_correo(
+                &mut (),
+                &LAURA,
+                id,
+                &Correo::nuevo("laura@diamante.co").unwrap(),
+                "Andrés"
+            )
+            .await,
+        Err(ErrorIdentidad::CorreoEnUso)
+    ));
+    let barbero = Actor::Barbero {
+        usuario: IdUsuario(2),
+        barbero: IdBarbero(7),
+    };
+    assert!(matches!(
+        cuentas.cambiar_correo(&mut (), &barbero, id, &nuevo, "x").await,
         Err(ErrorIdentidad::Prohibido)
     ));
 }

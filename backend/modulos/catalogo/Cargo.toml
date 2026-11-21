@@ -1,13 +1,28 @@
 [package]
 name = "catalogo"
-description = "Servicios simples, combos y categorías."
+description = "Servicios simples y combos, con su categoría, precio y duración."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+http-body-util.workspace = true
+plataforma = { workspace = true, features = ["pruebas"] }
+tokio.workspace = true
+tower.workspace = true
 
 [lints]
 workspace = true

@@ -5,17 +5,20 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use auditoria::api::{Auditor, EntradaAuditoria};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime};
 use nucleo::identificadores::{IdBarbero, IdDiaEspecial, IdUsuario};
 use nucleo::{Actor, ErrorPersistencia, RelojControlado, SinTransaccion};
 
 use super::CasosDeUso;
 use super::comandos::NuevoDiaEspecial;
+use super::comandos::SolicitudPolitica;
 use super::errores::ErrorNegocio;
 use super::puertos::{
-    DiaEspecialGuardado, Puertos, RESTRICCION_FECHA_UNICA, RepositorioDiasEspeciales, RepositorioNegocio,
+    ConsultaHorarioAtencion, DiaEspecialGuardado, PoliticaGuardada, Puertos, RESTRICCION_FECHA_UNICA,
+    RepositorioDiasEspeciales, RepositorioNegocio, RepositorioPoliticas,
 };
-use crate::dominio::entidades::{DatosNegocio, DiaEspecial, PropuestaDatosNegocio};
+use crate::api::ParametrosNegocio;
+use crate::dominio::entidades::{DatosNegocio, DiaEspecial, NuevaPolitica, PropuestaDatosNegocio};
 
 #[derive(Debug, Default)]
 struct NegocioEnMemoria(Mutex<Option<DatosNegocio>>);
@@ -80,6 +83,82 @@ impl RepositorioDiasEspeciales<()> for DiasEnMemoria {
         let posicion = dias.iter().position(|g| g.id == id);
         Ok(posicion.map(|i| dias.remove(i)))
     }
+    async fn obtener(
+        &self,
+        _: &mut (),
+        id: IdDiaEspecial,
+    ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia> {
+        Ok(self.dias.lock().unwrap().iter().find(|g| g.id == id).cloned())
+    }
+    async fn actualizar(
+        &self,
+        _: &mut (),
+        id: IdDiaEspecial,
+        dia: &DiaEspecial,
+    ) -> Result<(), ErrorPersistencia> {
+        let mut dias = self.dias.lock().unwrap();
+        if dias.iter().any(|g| g.id != id && g.dia.fecha() == dia.fecha()) {
+            return Err(ErrorPersistencia::Duplicado {
+                restriccion: RESTRICCION_FECHA_UNICA.into(),
+            });
+        }
+        if let Some(g) = dias.iter_mut().find(|g| g.id == id) {
+            g.dia = dia.clone();
+        }
+        Ok(())
+    }
+    async fn registrar_si_libre(
+        &self,
+        cx: &mut (),
+        dia: &DiaEspecial,
+    ) -> Result<Option<IdDiaEspecial>, ErrorPersistencia> {
+        match self.registrar(cx, dia).await {
+            Ok(id) => Ok(Some(id)),
+            Err(ErrorPersistencia::Duplicado { .. }) => Ok(None),
+            Err(otro) => Err(otro),
+        }
+    }
+}
+
+/// Lunes a sábado de 9:00 a 19:00; el domingo nadie trabaja.
+#[derive(Debug, Default)]
+struct HorarioFijo;
+
+#[async_trait]
+impl ConsultaHorarioAtencion<()> for HorarioFijo {
+    async fn por_dia(&self, _: &mut ()) -> Result<Vec<(i16, NaiveTime, NaiveTime)>, ErrorPersistencia> {
+        let (abre, cierra) = ("09:00:00".parse().unwrap(), "19:00:00".parse().unwrap());
+        Ok((1..=6).map(|d| (d, abre, cierra)).collect())
+    }
+}
+
+#[derive(Debug, Default)]
+struct PoliticasEnMemoria(Mutex<Vec<PoliticaGuardada>>);
+
+#[async_trait]
+impl RepositorioPoliticas<()> for PoliticasEnMemoria {
+    async fn listar(&self, _: &mut ()) -> Result<Vec<PoliticaGuardada>, ErrorPersistencia> {
+        let mut todas = self.0.lock().unwrap().clone();
+        todas.sort_by_key(|p| std::cmp::Reverse(p.vigente_desde));
+        Ok(todas)
+    }
+    async fn publicar(&self, _: &mut (), p: &NuevaPolitica) -> Result<i64, ErrorPersistencia> {
+        let mut todas = self.0.lock().unwrap();
+        if todas.iter().any(|g| g.tipo == p.tipo && g.version == p.version) {
+            return Err(ErrorPersistencia::Duplicado {
+                restriccion: "politica_version_uk".into(),
+            });
+        }
+        let id = i64::try_from(todas.len()).unwrap() + 1;
+        todas.push(PoliticaGuardada {
+            id,
+            tipo: p.tipo,
+            version: p.version.clone(),
+            url: p.url.clone(),
+            vigente_desde: p.vigente_desde,
+        });
+        Ok(id)
+    }
 }
 
 /// Acciones auditadas, en orden.
@@ -106,6 +185,8 @@ fn casos_con_auditoria() -> (CasosDeUso<()>, Arc<AuditoriaEnMemoria>) {
         transacciones: Arc::new(SinTransaccion),
         negocio: Arc::new(NegocioEnMemoria::default()),
         dias: Arc::new(DiasEnMemoria::default()),
+        horario: Arc::new(HorarioFijo),
+        politicas: Arc::new(PoliticasEnMemoria::default()),
         auditor: auditoria.clone(),
         reloj,
     });
@@ -276,4 +357,166 @@ async fn el_cliente_no_consulta_el_calendario_interno() {
         casos.listar_dias.ejecutar(&cliente, None, None).await,
         Err(ErrorNegocio::Prohibido)
     ));
+}
+
+#[tokio::test]
+async fn edita_un_dia_especial_y_respeta_la_fecha_unica() {
+    let (casos, auditoria) = casos_con_auditoria();
+    let creado = casos
+        .registrar_dia
+        .ejecutar(&admin(), nochebuena())
+        .await
+        .unwrap();
+    let otro = NuevoDiaEspecial {
+        fecha: fecha("2026-12-31"),
+        nombre: "Fin de año".into(),
+        tipo: "cerrado".into(),
+        hora_cierre: None,
+    };
+    casos.registrar_dia.ejecutar(&admin(), otro).await.unwrap();
+
+    let cambios = NuevoDiaEspecial {
+        hora_cierre: "13:00:00".parse().ok(),
+        ..nochebuena()
+    };
+    let editado = casos
+        .editar_dia
+        .ejecutar(&admin(), creado.id, cambios)
+        .await
+        .unwrap();
+    assert_eq!(editado.hora_cierre, "13:00:00".parse().ok());
+
+    let a_fin_de_anio = NuevoDiaEspecial {
+        fecha: fecha("2026-12-31"),
+        ..nochebuena()
+    };
+    assert!(matches!(
+        casos
+            .editar_dia
+            .ejecutar(&admin(), creado.id, a_fin_de_anio)
+            .await,
+        Err(ErrorNegocio::FechaOcupada(_))
+    ));
+    assert!(matches!(
+        casos
+            .editar_dia
+            .ejecutar(&admin(), IdDiaEspecial(99), nochebuena())
+            .await,
+        Err(ErrorNegocio::DiaEspecialNoEncontrado)
+    ));
+    assert!(auditoria.0.lock().unwrap().contains(&"editar_dia_especial"));
+}
+
+#[tokio::test]
+async fn precarga_los_festivos_restantes_del_anio_sin_duplicar() {
+    let casos = casos();
+    // Hoy es 18/11/2026: de 2026 solo quedan el 8 y el 25 de diciembre.
+    let inventario = NuevoDiaEspecial {
+        fecha: fecha("2026-12-08"),
+        nombre: "Cerrado por inventario".into(),
+        tipo: "cerrado".into(),
+        hora_cierre: None,
+    };
+    casos.registrar_dia.ejecutar(&admin(), inventario).await.unwrap();
+    let resultado = casos.precargar_festivos.ejecutar(&admin(), 2026).await.unwrap();
+    let fechas: Vec<String> = resultado.creados.iter().map(|d| d.fecha.to_string()).collect();
+    assert_eq!(fechas, ["2026-12-25"]);
+    assert_eq!(resultado.omitidos, 17);
+    assert!(resultado.creados[0].automatico);
+
+    let otra_vez = casos.precargar_festivos.ejecutar(&admin(), 2026).await.unwrap();
+    assert!(otra_vez.creados.is_empty(), "es idempotente");
+    assert_eq!(
+        casos
+            .precargar_festivos
+            .ejecutar(&admin(), 2027)
+            .await
+            .unwrap()
+            .creados
+            .len(),
+        18
+    );
+    assert_eq!(
+        campos(
+            casos
+                .precargar_festivos
+                .ejecutar(&admin(), 2040)
+                .await
+                .unwrap_err()
+        ),
+        ["anio"]
+    );
+    assert!(matches!(
+        casos.precargar_festivos.ejecutar(&barbero(), 2027).await,
+        Err(ErrorNegocio::Prohibido)
+    ));
+}
+
+#[tokio::test]
+async fn el_horario_de_atencion_marca_los_dias_sin_barberos() {
+    let casos = casos();
+    let horario = casos.horario_atencion.ejecutar(&barbero()).await.unwrap();
+    assert_eq!(horario.len(), 7);
+    assert_eq!((horario[0].nombre, horario[0].abierto), ("Lunes", true));
+    assert_eq!(horario[0].abre, "09:00:00".parse().ok());
+    assert_eq!(
+        (horario[6].nombre, horario[6].abierto, horario[6].abre),
+        ("Domingo", false, None)
+    );
+}
+
+#[tokio::test]
+async fn publica_versiones_y_marca_la_vigente_de_cada_tipo() {
+    let casos = casos();
+    let solicitud = |version: &str, desde: &str| SolicitudPolitica {
+        tipo: "tratamiento_datos".into(),
+        version: version.into(),
+        url: format!("/legal/datos-{version}"),
+        vigente_desde: desde.parse().ok(),
+    };
+    casos
+        .publicar_politica
+        .ejecutar(&admin(), solicitud("1", "2026-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+    casos
+        .publicar_politica
+        .ejecutar(&admin(), solicitud("2", "2026-06-01T00:00:00Z"))
+        .await
+        .unwrap();
+    // Programada para el futuro: todavía no rige.
+    casos
+        .publicar_politica
+        .ejecutar(&admin(), solicitud("3", "2027-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+    let repetida = casos
+        .publicar_politica
+        .ejecutar(&admin(), solicitud("2", "2026-07-01T00:00:00Z"))
+        .await;
+    assert_eq!(campos(repetida.unwrap_err()), ["version"]);
+
+    let lista = casos.listar_politicas.ejecutar(&admin()).await.unwrap();
+    let vigentes: Vec<&str> = lista
+        .iter()
+        .filter(|p| p.vigente)
+        .map(|p| p.version.as_str())
+        .collect();
+    assert_eq!(vigentes, ["2"]);
+}
+
+#[tokio::test]
+async fn la_fachada_da_la_comision_por_defecto() {
+    let casos = casos();
+    let propuesta = PropuestaDatosNegocio {
+        porcentaje_comision_defecto: 45.5,
+        ..propuesta()
+    };
+    casos
+        .actualizar_datos
+        .ejecutar(&admin(), propuesta)
+        .await
+        .unwrap();
+    let comision = casos.parametros.comision_por_defecto(&mut ()).await.unwrap();
+    assert_eq!(comision.centesimas(), 4550);
 }

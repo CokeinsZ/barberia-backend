@@ -21,7 +21,20 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         .merge(composicion.identidad.rutas())
         .merge(composicion.negocio.rutas())
         .merge(composicion.auditoria.rutas())
+        .merge(composicion.archivos.rutas())
+        .merge(composicion.catalogo.rutas())
+        .merge(composicion.barberos.rutas())
+        .merge(composicion.clientes.rutas())
+        .merge(composicion.verificacion.rutas())
+        .merge(composicion.agenda.rutas())
         .layer(from_fn_with_state(composicion.origenes.clone(), verificar_origen));
+
+    // WhatsApp simulado: lectura de los mensajes en cola, solo en desarrollo y pruebas.
+    let v1 = if composicion.rutas_de_pruebas {
+        v1.merge(composicion.notificaciones.rutas_de_pruebas())
+    } else {
+        v1
+    };
 
     Router::new()
         .route("/api/salud", get(salud::viva))
@@ -30,6 +43,8 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
             get(salud::lista).with_state(composicion.pool.clone()),
         )
         .nest("/api/v1", v1)
+        // Fotos públicas. En producción Caddy sirve `/media/publico/*` antes de llegar aquí.
+        .merge(composicion.archivos.rutas_media())
         .fallback(ruta_no_encontrada)
         .layer(Extension(composicion.sesiones.clone()))
         .layer(Extension(composicion.confianza_proxy))

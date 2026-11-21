@@ -10,6 +10,7 @@ contraseña y gestión de administradores. Los clientes no tienen cuenta.
 | Requisitos | RF-AUT-01 a 05, RF-AUT-07, RF-AUT-08 (parcial, ver abajo), RF-CFG-06, RNF-SEG-02, 05 y 07 |
 | Depende de | `auditoria` (`Auditor`), `notificaciones` (`BuzonSalida`) |
 | Puerto que implementa otro módulo | `api::PerfilesBarberos` (lo implementa `barberos`) |
+| Fachada para otros módulos | `api::CuentasPersonal<C>`: `barberos` crea la cuenta del barbero, le cambia el correo y le da o quita el acceso (con invitación y cierre de sesiones), dentro de su transacción |
 
 ## Endpoints (`/api/v1`)
 
@@ -57,9 +58,8 @@ transacción que el cambio.
 
 ## Pendiente
 
-- RF-AUT-08 por evento: cuando `barberos` publique `AccesoRevocado` (fase 2), desactivar la
-  cuenta y revocar sus sesiones. Hoy ya se cumple por la revalidación en cada petición.
-- Cuentas de barberos: las crea el módulo `barberos` en la fase 2 (con la misma invitación).
+- RF-AUT-08 ya se cumple: `barberos` quita el acceso por la fachada `CuentasPersonal` (en la
+  misma transacción) y, además, cada petición revalida el estado del día del barbero.
 - Limpieza de sesiones y enlaces vencidos: tarea de mantenimiento del módulo `trabajos` (fase 4).
 
 ## Estructura

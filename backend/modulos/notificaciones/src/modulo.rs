@@ -12,6 +12,7 @@ use crate::infraestructura::smtp::TransporteSmtp;
 
 #[derive(Debug, Clone)]
 pub struct ModuloNotificaciones {
+    pool: PgPool,
     buzon: Arc<BuzonPg>,
     enviar_correos: Option<Arc<EnviarCorreosPendientes>>,
 }
@@ -25,13 +26,14 @@ impl ModuloNotificaciones {
     ) -> Result<Self, ErrorNotificaciones> {
         let enviar_correos = match smtp {
             Some(config) => Some(Arc::new(EnviarCorreosPendientes::nuevo(
-                Arc::new(RepositorioCorreosPg::nuevo(pool)),
+                Arc::new(RepositorioCorreosPg::nuevo(pool.clone())),
                 Arc::new(TransporteSmtp::nuevo(config)?),
                 reloj.clone(),
             ))),
             None => None,
         };
         Ok(Self {
+            pool,
             buzon: Arc::new(BuzonPg::nuevo(reloj)),
             enviar_correos,
         })
@@ -40,6 +42,11 @@ impl ModuloNotificaciones {
     /// Buzón para los demás módulos: encola dentro de su unidad de trabajo.
     pub fn buzon(&self) -> Arc<dyn BuzonSalida<UnidadDeTrabajo>> {
         self.buzon.clone()
+    }
+
+    /// `GET /_pruebas/mensajes` (bajo `/api/v1`). Solo se monta con `DIAMANTE_PRUEBAS_E2E=true`.
+    pub fn rutas_de_pruebas(&self) -> axum::Router {
+        crate::http::rutas_de_pruebas(self.pool.clone())
     }
 
     pub fn envia_correos(&self) -> bool {

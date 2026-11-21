@@ -9,6 +9,7 @@
 
 mod aplicacion;
 mod dominio;
+mod http;
 mod infraestructura;
 mod modulo;
 

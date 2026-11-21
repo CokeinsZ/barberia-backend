@@ -11,6 +11,8 @@ publish.workspace = true
 pruebas = []
 
 [dependencies]
+aes-gcm.workspace = true
+hmac.workspace = true
 argon2.workspace = true
 async-trait.workspace = true
 axum.workspace = true

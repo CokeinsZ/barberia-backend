@@ -90,7 +90,7 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | GET | `/publico/landing` | Datos de la landing en una sola llamada: negocio, horario de atención, servicios y combos visibles, barberos visibles con su estado («de vacaciones hasta…») y políticas vigentes. Respuesta con `Cache-Control: public, max-age=60`. | RF-PUB-01…04, RF-CFG-03 |
 | GET | `/publico/servicios` | Servicios y combos agendables en línea que al menos un barbero ofrece. | RF-RES-02 |
 | GET | `/publico/barberos?servicio_id=` | Opciones de barbero para el servicio, con su estado, motivo si no se puede elegir y próxima hora libre. | RF-RES-03, RF-RES-04 |
-| GET | `/publico/disponibilidad/calendario?servicio_id=&barbero_id=&mes=2026-11` | Para cada día de la ventana: `disponible`, `ultimos_cupos` (≤ 3 horas) o `sin_cupos`. `barbero_id` vacío significa «Cualquier barbero». | RF-RES-05, RF-SIS-01 |
+| GET | `/publico/disponibilidad/calendario?servicio_id=&barbero_id=&mes=2026-11` | Para cada día del mes: `disponible`, `ultimos_cupos` (≤ 3 horas), `sin_cupos` o `fuera_de_ventana` (pasado o más allá de la ventana). `barbero_id` vacío significa «Cualquier barbero». | RF-RES-05, RF-SIS-01 |
 | GET | `/publico/disponibilidad/horas?servicio_id=&barbero_id=&fecha=` | Horas de inicio libres agrupadas en mañana, tarde y noche. Con «Cualquier barbero», cada hora trae el barbero que se asignaría. | RF-RES-05, RF-SIS-02 |
 | POST | `/publico/verificaciones` | `{ "celular": "3105559917" }` → envía el código por WhatsApp. Responde `202` con `{ id, expira_en, reenviar_desde }`. | RF-RES-09 |
 | POST | `/publico/verificaciones/{id}/confirmar` | `{ "codigo": "4821" }` → `{ comprobante, cliente }`. `cliente` trae nombre, correo y fecha de nacimiento si el celular ya existe: el autocompletado ocurre después de verificar. | RF-RES-08, RF-RES-09 |
@@ -160,12 +160,13 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | PUT | `/barberos/orden` | Admin | `{ barbero_ids: [...] }`. | RF-BAR-19 |
 | GET / PUT | `/barberos/{id}/horario` | Admin; Barbero (propio) | Franjas por día; reemplaza el horario completo. Publica `HorarioCambiado` (el administrador recibe un aviso si hay citas afectadas). | RF-BAR-07, RF-PBA-09 |
 | GET / PUT | `/barberos/{id}/servicios` | Admin; Barbero (propio) | `{ servicio_ids: [...] }`. | RF-BAR-08, RF-PBA-09 |
-| POST | `/barberos/{id}/foto` | Admin | Multipart; imagen vertical. | RF-BAR-04 |
+| POST | `/barberos/{id}/foto` | Admin | Multipart (campo `foto`); imagen vertical JPG, PNG o WebP de hasta 5 MB. | RF-BAR-04 |
 | GET / POST | `/barberos/{id}/documentos` | Admin | Lista y carga (multipart, con `tipo` y `periodo` para la PILA). | RF-BAR-06, RF-BAR-18 |
 | GET | `/barberos/{id}/documentos/{doc_id}/descarga` | Admin | Redirige a una URL firmada de 5 minutos. | RNF-SEG-09 |
 | DELETE | `/barberos/{id}/documentos/{doc_id}` | Admin | Quita el documento. | RF-BAR-06 |
 | GET / POST | `/barberos/{id}/ausencias` | Admin | Vacaciones, incapacidad, licencia o suspensión con rango, observación y soporte. Publica `AusenciaRegistrada`. | RF-BAR-11, RF-BAR-12 |
 | POST | `/barberos/{id}/ausencias/{aid}/anular` | Admin | Anula una ausencia. | RF-BAR-11 |
+| POST | `/barberos/{id}/ausencias/{aid}/soporte` | Admin | Multipart (campo `soporte`): soporte de una incapacidad o licencia (privado). | RF-BAR-12 |
 | POST | `/barberos/{id}/retiro` | Admin | `{ fecha, motivo }`; desactiva la cuenta y cierra sus sesiones. | RF-BAR-11, RF-BAR-15 |
 | GET / POST | `/barberos/{id}/bloqueos` | Admin; Barbero (propio) | Bloqueos puntuales. | RF-PBA-10, RF-AGE-13 |
 | DELETE | `/barberos/{id}/bloqueos/{bid}` | Admin; Barbero (propio) | Quita un bloqueo. | RF-PBA-10 |
@@ -197,7 +198,7 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | GET | `/agenda/citas?desde=&hasta=&barbero_id=&estado=` | Admin; Barbero (propio) | Lista de citas. El barbero la usa para «Hoy», «Mañana» y «Próximos 7 días». | RF-AGE-02, RF-PBA-01 |
 | GET | `/agenda/citas/{id}` | Admin; Barbero (propio) | Detalle con historial del cliente, origen, nota y resultado si está cerrada. | RF-AGE-04 |
 | POST | `/agenda/citas` | Admin | Cita creada por el personal: `{ cliente_id \| cliente_nuevo, servicio_id, barbero_id, inicio, nota }`; sin código ni anticipación mínima. | RF-AGE-05 |
-| GET | `/agenda/disponibilidad/horas?servicio_id=&barbero_id=&fecha=&personal=true` | Admin | Variante para el personal (permite «ahora mismo»). | RF-AGE-05 |
+| GET | `/agenda/disponibilidad/horas?servicio_id=&barbero_id=&fecha=` | Admin | Variante para el personal: permite «ahora mismo» y fechas fuera de la ventana pública. | RF-AGE-05 |
 | POST | `/agenda/citas/{id}/reprogramar` | Admin | `{ inicio, barbero_id }`; avisa al cliente. | RF-AGE-06, RF-NOT-04 |
 | POST | `/agenda/citas/{id}/cancelar` | Admin | `{ motivo, avisar_cliente }`. | RF-AGE-07, RF-NOT-04 |
 | POST | `/agenda/citas/{id}/confirmar` | Admin | Confirmación manual (p. ej., por llamada). | RN-31 |
@@ -257,18 +258,18 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 |---|---|---|
 | GET | `/salud` | Proceso vivo (para Docker). |
 | GET | `/salud/lista` | Listo para atender: responde la base de datos. |
-| GET | `/media/publico/{clave}` | Fotos públicas. Las sirve Caddy directamente desde el volumen, sin pasar por la API. |
-| GET | `/archivos/{id}?exp=&firma=` | Descarga de un archivo privado con URL firmada (HMAC) y vencimiento. |
+| GET | `/media/publico/{clave}` | Fotos públicas. En producción las sirve Caddy directamente desde el volumen; en desarrollo, la API. |
+| GET | `/api/v1/archivos/{id}?exp=&firma=` | Descarga de un archivo privado con URL firmada (HMAC-SHA256) que vence en 5 minutos; siempre como adjunto. |
 
 ### 2.13 Solo en el ambiente de pruebas E2E
 
-Se compilan únicamente con la *feature* de Cargo `pruebas-e2e`; la imagen de producción no los contiene.
+Solo existen con `DIAMANTE_PRUEBAS_E2E=true`, que `docker-compose.override.yml` y `docker-compose.e2e.yml` activan. En producción la configuración la rechaza y el proceso no arranca, así que la imagen de producción nunca los expone. Hoy está implementado `GET /_pruebas/mensajes` (fase 3); los demás llegan con el escenario base y Playwright.
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/_pruebas/reinicio` | Vacía los datos y carga el escenario base. |
 | POST | `/_pruebas/reloj` | `{ "ahora": "2026-11-18T14:50:00-05:00" }`: fija el reloj del servidor. |
-| GET | `/_pruebas/mensajes?destinatario=` | Mensajes que el WhatsApp simulado «envió» (por ejemplo, para leer el código). |
+| GET | `/_pruebas/mensajes?destinatario=3105559917` | Últimos 20 mensajes en cola para ese destinatario (plantilla y variables), por ejemplo para leer el código de verificación. |
 | POST | `/_pruebas/trabajos/ejecutar` | Ejecuta en el momento las tareas pendientes del worker (recordatorios). |
 
 ---
@@ -298,12 +299,16 @@ Location: /api/v1/publico/citas/gestion/Zk3v…
 
 {
   "cita": {
+    "id": 41,
     "estado": "confirmada",
-    "servicio": { "id": 3, "nombre": "Combo cabello + barba", "duracion_min": 75 },
-    "barbero": { "id": 1, "nombre": "Santiago Ríos", "especialidad": "Fades y degradados", "asignacion_automatica": true },
+    "origen": "en_linea",
     "inicio": "2026-11-19T15:30:00-05:00",
     "fin": "2026-11-19T16:45:00-05:00",
-    "total_a_pagar": 55000
+    "precio": 55000,
+    "servicio": { "id": 3, "nombre": "Combo cabello + barba", "duracion_min": 75 },
+    "barbero": { "id": 1, "nombre": "Santiago Ríos", "asignacion_automatica": true },
+    "cancelacion_tardia": null,
+    "motivo_cancelacion": null
   },
   "enlace_gestion": "https://diamante.co/cita/Zk3v…",
   "calendario_google": "https://calendar.google.com/calendar/render?action=TEMPLATE&…"
@@ -357,11 +362,11 @@ Los módulos no se llaman en círculo: cuando un módulo necesita reaccionar a l
 
 | Evento | Publica | Lo consumen | Efecto | Entrega |
 |---|---|---|---|---|
-| `CitaCreada` | agenda | notificaciones | Confirmación por WhatsApp con enlace | Cola (asíncrona) |
-| `CitaReprogramada` / `CitaCancelada` | agenda | notificaciones | Aviso al cliente | Cola |
+| `CitaCreada` | agenda | (ninguno aún) | La confirmación por WhatsApp con enlace la encola la propia agenda con la fachada `BuzonSalida` en la misma transacción (*outbox*); el worker la envía en la fase 4 | Misma transacción |
+| `CitaReprogramada` / `CitaCancelada` | agenda | (ninguno aún) | Igual: el aviso al cliente se encola en la transacción del cambio | Misma transacción |
 | `InasistenciaMarcada` | agenda | clientes | Suma inasistencias a la proyección | Misma transacción |
 | `VentaRegistrada` | ventas | agenda, clientes | Cita «Atendida»; visitas, total gastado y barbero habitual | Misma transacción |
 | `VentaAnulada` | ventas | clientes | Recalcula las métricas del cliente | Misma transacción |
-| `HorarioCambiado` / `BloqueoCreado` / `AusenciaRegistrada` | barberos | agenda | Si hay citas afectadas, crea un aviso para el administrador | Misma transacción |
+| `HorarioCambiado` / `BloqueoCreado` / `AusenciaRegistrada` | barberos | agenda (fase 4) | Si hay citas afectadas, crea un aviso para el administrador. Desde la fase 3 el panel las consulta antes de guardar con `POST /agenda/conflictos` | Misma transacción |
 | `RespuestaWhatsAppRecibida` | notificaciones | agenda | «Confirmo» confirma la cita; «Cancelar» la cancela | Cola |
-| `BarberoRetirado` / `AccesoRevocado` | barberos | identidad | Desactiva la cuenta y cierra sesiones | Misma transacción |
+| `AccesoRevocado` | barberos | (ninguno) | La cuenta la desactiva `barberos` por la fachada `CuentasPersonal` de `identidad`, en la misma transacción. La agenda no necesita reaccionar: lee el estado del barbero (retiro, ausencias, citas en línea) al calcular la disponibilidad | Misma transacción |

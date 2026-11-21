@@ -11,7 +11,7 @@ use plataforma::base_datos::{TransaccionesPg, UnidadDeTrabajo};
 use plataforma::http::ValidadorSesion;
 use sqlx::PgPool;
 
-use crate::api::{ErrorIdentidad, InvitacionEmitida, PerfilesBarberos};
+use crate::api::{CuentasPersonal, ErrorIdentidad, InvitacionEmitida, PerfilesBarberos};
 use crate::aplicacion::CasosDeUso;
 use crate::aplicacion::puertos::Puertos;
 use crate::http::{self, EstadoHttp, Limites, ValidadorIdentidad};
@@ -65,6 +65,11 @@ impl ModuloIdentidad {
             casos: self.casos.clone(),
             limites: self.limites.clone(),
         })
+    }
+
+    /// Fachada de cuentas del personal para el módulo `barberos`.
+    pub fn cuentas(&self) -> Arc<dyn CuentasPersonal<UnidadDeTrabajo>> {
+        self.casos.cuentas.clone()
     }
 
     /// Validador de la cookie de sesión para toda la API.

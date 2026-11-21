@@ -57,7 +57,7 @@ async fn el_acceso_depende_del_estado_del_dia() {
 
     // Viernes 20 de noviembre de 2026 a las 11 p. m. en Bogotá (ya es sábado en UTC).
     let reloj = Arc::new(RelojControlado::en("2026-11-21T04:00:00Z".parse().unwrap()));
-    let perfiles = ModuloBarberos::con_postgres(reloj).perfiles_para_identidad();
+    let perfiles = ModuloBarberos::perfiles_para_identidad(reloj);
     let consultar = |usuario| {
         let perfiles = perfiles.clone();
         let pool = base.pool.clone();

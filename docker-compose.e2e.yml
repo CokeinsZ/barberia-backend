@@ -18,6 +18,8 @@ services:
   api:
     environment:
       DIAMANTE_ENTORNO: pruebas
+      # WhatsApp simulado: GET /api/v1/_pruebas/mensajes muestra los mensajes en cola (códigos).
+      DIAMANTE_PRUEBAS_E2E: "true"
       DIAMANTE_URL_PUBLICA: http://localhost:8080
     ports:
       - "127.0.0.1:8080:8080"

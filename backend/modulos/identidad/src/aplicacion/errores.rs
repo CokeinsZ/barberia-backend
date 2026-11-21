@@ -19,6 +19,8 @@ pub enum ErrorIdentidad {
     Prohibido,
     #[error("El administrador no existe.")]
     AdministradorNoEncontrado,
+    #[error("La cuenta no existe.")]
+    CuentaNoEncontrada,
     #[error("El enlace venció o ya se usó. Pide uno nuevo.")]
     EnlaceVencido,
     #[error("Ya existe una cuenta con ese correo.")]
@@ -56,7 +58,9 @@ impl ErrorDeAplicacion for ErrorIdentidad {
         match self {
             ErrorIdentidad::CredencialesInvalidas | ErrorIdentidad::NoAutenticado => Categoria::NoAutenticado,
             ErrorIdentidad::AccesoSuspendido | ErrorIdentidad::Prohibido => Categoria::Prohibido,
-            ErrorIdentidad::AdministradorNoEncontrado => Categoria::NoEncontrado,
+            ErrorIdentidad::AdministradorNoEncontrado | ErrorIdentidad::CuentaNoEncontrada => {
+                Categoria::NoEncontrado
+            }
             ErrorIdentidad::EnlaceVencido => Categoria::Vencido,
             ErrorIdentidad::CorreoEnUso
             | ErrorIdentidad::UltimoAdministrador
@@ -72,7 +76,7 @@ impl ErrorDeAplicacion for ErrorIdentidad {
             ErrorIdentidad::AccesoSuspendido => "acceso_suspendido",
             ErrorIdentidad::NoAutenticado => "no_autenticado",
             ErrorIdentidad::Prohibido => "prohibido",
-            ErrorIdentidad::AdministradorNoEncontrado => "no_encontrado",
+            ErrorIdentidad::AdministradorNoEncontrado | ErrorIdentidad::CuentaNoEncontrada => "no_encontrado",
             ErrorIdentidad::EnlaceVencido => "enlace_vencido",
             ErrorIdentidad::CorreoEnUso => "correo_en_uso",
             ErrorIdentidad::UltimoAdministrador => "ultimo_administrador",

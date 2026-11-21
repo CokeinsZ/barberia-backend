@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use auditoria::api::Auditor;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use nucleo::identificadores::IdDiaEspecial;
 use nucleo::{ErrorPersistencia, Reloj, Transacciones};
 
-use crate::dominio::entidades::{DatosNegocio, DiaEspecial};
+use crate::dominio::entidades::{DatosNegocio, DiaEspecial, NuevaPolitica, TipoPolitica};
 
 #[async_trait]
 pub(crate) trait RepositorioNegocio<C: Send>: Send + Sync + fmt::Debug {
@@ -43,6 +43,48 @@ pub(crate) trait RepositorioDiasEspeciales<C: Send>: Send + Sync + fmt::Debug {
         cx: &mut C,
         id: IdDiaEspecial,
     ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia>;
+    async fn obtener(
+        &self,
+        cx: &mut C,
+        id: IdDiaEspecial,
+    ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia>;
+    /// Reemplaza el día. Falla con `Duplicado` si la nueva fecha ya está ocupada.
+    async fn actualizar(
+        &self,
+        cx: &mut C,
+        id: IdDiaEspecial,
+        dia: &DiaEspecial,
+    ) -> Result<(), ErrorPersistencia>;
+    /// Registra solo si la fecha está libre (precarga idempotente). Devuelve el id si lo creó.
+    async fn registrar_si_libre(
+        &self,
+        cx: &mut C,
+        dia: &DiaEspecial,
+    ) -> Result<Option<IdDiaEspecial>, ErrorPersistencia>;
+}
+
+/// Franja más temprana y más tardía de cada día de la semana (1 = lunes … 7 = domingo) entre
+/// los barberos vigentes. Sale de la vista publicada `barberos.v_horario_atencion` (DA-10).
+#[async_trait]
+pub(crate) trait ConsultaHorarioAtencion<C: Send>: Send + Sync + fmt::Debug {
+    async fn por_dia(&self, cx: &mut C) -> Result<Vec<(i16, NaiveTime, NaiveTime)>, ErrorPersistencia>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PoliticaGuardada {
+    pub(crate) id: i64,
+    pub(crate) tipo: TipoPolitica,
+    pub(crate) version: String,
+    pub(crate) url: String,
+    pub(crate) vigente_desde: DateTime<Utc>,
+}
+
+#[async_trait]
+pub(crate) trait RepositorioPoliticas<C: Send>: Send + Sync + fmt::Debug {
+    /// Todas las versiones, de la más reciente a la más antigua.
+    async fn listar(&self, cx: &mut C) -> Result<Vec<PoliticaGuardada>, ErrorPersistencia>;
+    /// Falla con `Duplicado { restriccion: "politica_version_uk" }` si la versión ya existe.
+    async fn publicar(&self, cx: &mut C, politica: &NuevaPolitica) -> Result<i64, ErrorPersistencia>;
 }
 
 /// Restricción única de la fecha de un día especial (ver la migración del módulo).
@@ -54,6 +96,8 @@ pub(crate) struct Puertos<C: Send> {
     pub(crate) transacciones: Arc<dyn Transacciones<C>>,
     pub(crate) negocio: Arc<dyn RepositorioNegocio<C>>,
     pub(crate) dias: Arc<dyn RepositorioDiasEspeciales<C>>,
+    pub(crate) horario: Arc<dyn ConsultaHorarioAtencion<C>>,
+    pub(crate) politicas: Arc<dyn RepositorioPoliticas<C>>,
     pub(crate) auditor: Arc<dyn Auditor<C>>,
     pub(crate) reloj: Arc<dyn Reloj>,
 }

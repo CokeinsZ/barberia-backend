@@ -95,4 +95,66 @@ impl RepositorioDiasEspeciales<UnidadDeTrabajo> for RepositorioDiasEspecialesPg 
         .map_err(a_error_persistencia)?;
         fila.map(DiaEspecialGuardado::try_from).transpose()
     }
+
+    async fn obtener(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: IdDiaEspecial,
+    ) -> Result<Option<DiaEspecialGuardado>, ErrorPersistencia> {
+        let fila: Option<FilaDiaEspecial> = sqlx::query_as(
+            "SELECT id, fecha, nombre, tipo::text AS tipo, hora_cierre, origen::text AS origen
+             FROM negocio.dia_especial WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id.0)
+        .fetch_optional(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        fila.map(DiaEspecialGuardado::try_from).transpose()
+    }
+
+    async fn actualizar(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        id: IdDiaEspecial,
+        dia: &DiaEspecial,
+    ) -> Result<(), ErrorPersistencia> {
+        sqlx::query(
+            "UPDATE negocio.dia_especial
+             SET fecha = $2, nombre = $3, tipo = $4::negocio.tipo_dia_especial, hora_cierre = $5,
+                 origen = $6::negocio.origen_dia_especial
+             WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(dia.fecha())
+        .bind(dia.nombre())
+        .bind(dia.tipo().codigo())
+        .bind(dia.tipo().hora_cierre())
+        .bind(dia.origen().codigo())
+        .execute(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(())
+    }
+
+    async fn registrar_si_libre(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        dia: &DiaEspecial,
+    ) -> Result<Option<IdDiaEspecial>, ErrorPersistencia> {
+        let id: Option<i64> = sqlx::query_scalar(
+            "INSERT INTO negocio.dia_especial (fecha, nombre, tipo, hora_cierre, origen)
+             VALUES ($1, $2, $3::negocio.tipo_dia_especial, $4, $5::negocio.origen_dia_especial)
+             ON CONFLICT (fecha) DO NOTHING
+             RETURNING id",
+        )
+        .bind(dia.fecha())
+        .bind(dia.nombre())
+        .bind(dia.tipo().codigo())
+        .bind(dia.tipo().hora_cierre())
+        .bind(dia.origen().codigo())
+        .fetch_optional(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(id.map(IdDiaEspecial))
+    }
 }

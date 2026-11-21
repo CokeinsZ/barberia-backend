@@ -7,7 +7,25 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+imagesize.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+serde.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+plataforma = { workspace = true, features = ["pruebas"] }
+tower.workspace = true
 
 [lints]
 workspace = true

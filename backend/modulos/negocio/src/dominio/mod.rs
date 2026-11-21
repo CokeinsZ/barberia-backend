@@ -2,3 +2,4 @@
 
 pub(crate) mod entidades;
 pub(crate) mod errores;
+pub(crate) mod festivos;

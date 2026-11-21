@@ -9,11 +9,13 @@ use nucleo::Reloj;
 use plataforma::base_datos::{TransaccionesPg, UnidadDeTrabajo};
 use sqlx::PgPool;
 
-use crate::api::CalendarioNegocio;
+use crate::api::{CalendarioNegocio, DatosPublicos, ParametrosNegocio};
 use crate::aplicacion::CasosDeUso;
 use crate::aplicacion::puertos::Puertos;
 use crate::http;
-use crate::infraestructura::postgres::{RepositorioDiasEspecialesPg, RepositorioNegocioPg};
+use crate::infraestructura::postgres::{
+    ConsultaHorarioAtencionPg, RepositorioDiasEspecialesPg, RepositorioNegocioPg, RepositorioPoliticasPg,
+};
 
 #[derive(Debug, Clone)]
 pub struct ModuloNegocio {
@@ -32,6 +34,8 @@ impl ModuloNegocio {
             transacciones: Arc::new(TransaccionesPg::nuevas(pool)),
             negocio: Arc::new(RepositorioNegocioPg),
             dias: Arc::new(RepositorioDiasEspecialesPg),
+            horario: Arc::new(ConsultaHorarioAtencionPg),
+            politicas: Arc::new(RepositorioPoliticasPg),
             auditor,
             reloj,
         });
@@ -48,5 +52,15 @@ impl ModuloNegocio {
     /// Fachada para el módulo `agenda`.
     pub fn calendario(&self) -> Arc<dyn CalendarioNegocio<UnidadDeTrabajo>> {
         self.casos.listar_dias.clone()
+    }
+
+    /// Datos públicos para la landing y el agendamiento (`agenda`).
+    pub fn datos_publicos(&self) -> Arc<dyn DatosPublicos<UnidadDeTrabajo>> {
+        self.casos.parametros.clone()
+    }
+
+    /// Fachada de parámetros (p. ej. la comisión por defecto para `barberos`).
+    pub fn parametros(&self) -> Arc<dyn ParametrosNegocio<UnidadDeTrabajo>> {
+        self.casos.parametros.clone()
     }
 }

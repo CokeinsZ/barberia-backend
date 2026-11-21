@@ -1,9 +1,9 @@
 //! Cuerpos y parámetros de entrada. Rechazan campos desconocidos para detectar errores del cliente.
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::Deserialize;
 
-use crate::aplicacion::comandos::NuevoDiaEspecial;
+use crate::aplicacion::comandos::{NuevoDiaEspecial, SolicitudPolitica};
 use crate::dominio::entidades::PropuestaDatosNegocio;
 
 #[derive(Debug, Deserialize)]
@@ -64,4 +64,26 @@ impl From<NuevoDiaSolicitud> for NuevoDiaEspecial {
 pub(crate) struct RangoSolicitud {
     pub(crate) desde: Option<NaiveDate>,
     pub(crate) hasta: Option<NaiveDate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NuevaPoliticaSolicitud {
+    /// `tratamiento_datos`, `cancelacion` o `terminos`.
+    tipo: String,
+    version: String,
+    url: String,
+    #[serde(default)]
+    vigente_desde: Option<DateTime<Utc>>,
+}
+
+impl From<NuevaPoliticaSolicitud> for SolicitudPolitica {
+    fn from(s: NuevaPoliticaSolicitud) -> Self {
+        Self {
+            tipo: s.tipo,
+            version: s.version,
+            url: s.url,
+            vigente_desde: s.vigente_desde,
+        }
+    }
 }

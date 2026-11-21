@@ -1,13 +1,26 @@
 [package]
 name = "clientes"
-description = "Clientes, autorizaciones de datos, habeas data, segmentos y proyección de métricas."
+description = "Clientes: registro único por celular, autorizaciones, búsqueda, segmentos e historial."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+chrono.workspace = true
+contratos.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

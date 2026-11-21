@@ -1,11 +1,24 @@
 //! # Módulo `archivos`
 //!
-//! Almacenamiento de fotos y documentos en el volumen de archivos y URL firmadas.
+//! Almacenamiento de fotos y documentos en el volumen de archivos (`DIAMANTE_ARCHIVOS_DIR`) y
+//! URL firmadas (RNF-SEG-09).
 //!
-//! **Estado**: fase 0 — el esquema `archivos` de la base de datos está listo en `migraciones/`. El código se construye en la
-//! fase 1 con la misma estructura del módulo `negocio` (ver `docs/plan-de-desarrollo.md`, sección 4.1).
+//! - Los módulos dueños (p. ej. `barberos`) guardan con [`api::Archivos::guardar`] dentro de su
+//!   transacción: aquí se valida el tipo **por su contenido** (no por la extensión) y el tamaño.
+//! - **Públicos** (fotos de barberos): `/media/publico/…`, que en producción sirve Caddy
+//!   directamente desde el volumen.
+//! - **Privados** (documentos, soportes): solo con una URL firmada (HMAC-SHA256) de corta
+//!   duración, `GET /api/v1/archivos/{id}?exp=…&firma=…`.
 
-use sqlx::migrate::Migrator;
+mod aplicacion;
+mod dominio;
+mod http;
+mod infraestructura;
+mod modulo;
 
-/// Migraciones del esquema `archivos`. Las aplica el comando `migrar` junto con las de los demás módulos.
-pub static MIGRACIONES: Migrator = sqlx::migrate!("./migraciones");
+pub mod api;
+
+pub use modulo::{DependenciasArchivos, ModuloArchivos};
+
+/// Migraciones del esquema `archivos`.
+pub static MIGRACIONES: sqlx::migrate::Migrator = sqlx::migrate!("./migraciones");

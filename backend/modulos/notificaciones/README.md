@@ -1,13 +1,13 @@
 # Módulo `notificaciones`
 
-Cola de salida de mensajes (patrón *outbox*), correo SMTP y, en la fase 4, WhatsApp Cloud API,
-webhooks y avisos internos.
+Cola de salida de mensajes (patrón *outbox*), correo SMTP y, en la fase 4, el envío por
+WhatsApp Cloud API, webhooks y avisos internos.
 
 | | |
 |---|---|
-| Fase del plan | 1 (correo) ✅ · 4 (WhatsApp, webhooks, avisos) |
+| Fase del plan | 1 (correo) ✅ · 3 (WhatsApp en cola) ✅ · 4 (envío por WhatsApp, webhooks, avisos) |
 | Esquema de base de datos | `notificaciones` (ver `migraciones/`) |
-| Fachada | `api::BuzonSalida<C>::encolar_correo` y las plantillas `api::PlantillaCorreo` |
+| Fachada | `api::BuzonSalida<C>::encolar_correo` / `encolar_whatsapp` y las plantillas `api::PlantillaCorreo` / `api::PlantillaWhatsApp` |
 
 ## Cómo funciona el correo
 
@@ -28,6 +28,20 @@ los atrapa: <http://localhost:8025>.
 |---|---|
 | `invitacion_personal` | Crear la contraseña de una cuenta nueva del personal (vence en 7 días) |
 | `recuperacion_contrasena` | Restablecer la contraseña (vence en 1 hora) |
+
+## WhatsApp (fase 3: en cola)
+
+`encolar_whatsapp` guarda el mensaje con canal `whatsapp` en la misma transacción del caso de
+uso; el envío real llega en la fase 4. Mientras tanto, con `DIAMANTE_PRUEBAS_E2E=true` (nunca en
+producción: la API no arranca) los mensajes recientes de un celular se leen en
+`GET /api/v1/_pruebas/mensajes?destinatario=3001112233` (los últimos 20).
+
+| Plantilla | Uso | Secreto |
+|---|---|---|
+| `codigo_verificacion` | Código para reservar | Sí |
+| `cita_confirmada` | Confirmación con enlace de gestión | Sí |
+| `cita_reprogramada` | Aviso con el enlace nuevo | Sí |
+| `cita_cancelada` | Aviso de cancelación | No |
 
 ## Eventos que publica (crate `contratos`)
 

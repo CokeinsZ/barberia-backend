@@ -5,11 +5,11 @@ agendamiento en línea, panel del administrador y panel del barbero.
 
 | Parte | Tecnología | Carpeta | Estado |
 |---|---|---|---|
-| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 y 1 listas: fundaciones, `identidad`, `negocio`, `auditoria` y correo de `notificaciones` |
+| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 a 3 listas: fundaciones, `identidad`, `negocio`, `auditoria`, `archivos`, `catalogo`, `barberos`, `clientes`, `verificacion`, `agenda` (disponibilidad, reserva en línea, gestión por enlace y panel) y la cola de `notificaciones` (correo enviado; WhatsApp en cola hasta la fase 4) |
 | Base de datos | PostgreSQL 18, un esquema por módulo | `backend/**/migraciones/` | Esquema completo (45 tablas) en migraciones por módulo |
 | Frontend | Astro + React | `frontend/` | Pendiente (fase 0, parte de frontend) |
 | Pruebas E2E | Playwright | `e2e/` | Pendiente |
-| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API, worker y Mailpit (desarrollo y E2E) |
+| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API (con el volumen de archivos), worker y Mailpit (desarrollo y E2E) |
 
 ## Documentación
 
@@ -18,6 +18,7 @@ agendamiento en línea, panel del administrador y panel del barbero.
 - Diseño: [base de datos](docs/diseno/base-de-datos.md), [API](docs/diseno/api.md), [pruebas E2E](docs/diseno/pruebas-e2e.md)
 - [Decisiones de arquitectura (ADR)](docs/decisiones/)
 - Módulo de referencia: [`backend/modulos/negocio`](backend/modulos/negocio/README.md)
+- Pruebas manuales: [colección de Postman](docs/pruebas-manuales/diamante-barberia.postman_collection.json) (222 peticiones por módulo, verificada con newman)
 
 ## Arranque rápido
 

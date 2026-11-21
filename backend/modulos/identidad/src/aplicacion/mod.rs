@@ -4,6 +4,7 @@ pub(crate) mod comandos;
 pub(crate) mod consultas;
 pub(crate) mod dto;
 pub(crate) mod errores;
+mod fachada_cuentas;
 pub(crate) mod politicas;
 pub(crate) mod puertos;
 
@@ -17,6 +18,7 @@ use comandos::{
     InvitarAdministrador, RestablecerContrasena, SolicitarRecuperacion,
 };
 use consultas::{ConsultarSesion, ListarAdministradores, ValidarSesion};
+use fachada_cuentas::FachadaCuentas;
 use puertos::Puertos;
 
 /// Todos los casos de uso del módulo, conectados con los mismos puertos.
@@ -33,6 +35,7 @@ pub(crate) struct CasosDeUso<C: Send> {
     pub(crate) invitar_administrador: InvitarAdministrador<C>,
     pub(crate) listar_administradores: ListarAdministradores<C>,
     pub(crate) cambiar_estado_administrador: CambiarEstadoAdministrador<C>,
+    pub(crate) cuentas: Arc<FachadaCuentas<C>>,
 }
 
 impl<C: Send + 'static> CasosDeUso<C> {
@@ -49,7 +52,8 @@ impl<C: Send + 'static> CasosDeUso<C> {
             cambiar_contrasena: CambiarContrasena::nuevo(p.clone()),
             invitar_administrador: InvitarAdministrador::nuevo(p.clone()),
             listar_administradores: ListarAdministradores::nuevo(p.clone()),
-            cambiar_estado_administrador: CambiarEstadoAdministrador::nuevo(p),
+            cambiar_estado_administrador: CambiarEstadoAdministrador::nuevo(p.clone()),
+            cuentas: Arc::new(FachadaCuentas::nueva(p)),
         }
     }
 }

@@ -3,6 +3,9 @@
 
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use base64::Engine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Entorno {
@@ -82,6 +85,27 @@ pub struct Configuracion {
     pub confiar_proxy: bool,
     /// Envío de correos. Sin configuración, los correos quedan en cola sin enviarse.
     pub smtp: Option<ConfiguracionSmtp>,
+    /// Carpeta raíz del almacenamiento de archivos (volumen `archivos`).
+    pub archivos_dir: PathBuf,
+    /// Clave para firmar las URL de los archivos privados (HMAC-SHA256, 32 caracteres o más).
+    /// Obligatoria en producción; en desarrollo, si falta, se genera una al arrancar.
+    pub clave_firma: Option<Secreto>,
+    /// Clave AES-256 de los datos sensibles (32 bytes en base64). Obligatoria en producción;
+    /// en desarrollo, si falta, se usa una clave fija de desarrollo.
+    pub clave_cifrado: Option<ClaveCifrado>,
+    /// Rutas de apoyo para pruebas (`/api/v1/_pruebas/…`): solo con `DIAMANTE_PRUEBAS_E2E=true`
+    /// y nunca en producción.
+    pub rutas_de_pruebas: bool,
+}
+
+/// Clave AES-256 que nunca se imprime en logs ni en `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClaveCifrado(pub [u8; 32]);
+
+impl fmt::Debug for ClaveCifrado {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ClaveCifrado(***)")
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -228,6 +252,50 @@ impl Configuracion {
             }
         });
 
+        let archivos_dir =
+            PathBuf::from(leer("DIAMANTE_ARCHIVOS_DIR").unwrap_or_else(|| "/datos/archivos".into()));
+
+        let clave_firma = leer("DIAMANTE_CLAVE_FIRMA").map(Secreto::nuevo);
+        match &clave_firma {
+            Some(clave) if clave.exponer().chars().count() < 32 => {
+                invalidas.push("DIAMANTE_CLAVE_FIRMA (use 32 caracteres o más)".to_owned());
+            }
+            None if entorno == Entorno::Produccion => faltantes.push("DIAMANTE_CLAVE_FIRMA"),
+            _ => {}
+        }
+
+        let clave_cifrado = match leer("DIAMANTE_CLAVE_CIFRADO") {
+            Some(texto) => match decodificar_clave(&texto) {
+                Some(clave) => Some(ClaveCifrado(clave)),
+                None => {
+                    invalidas.push(
+                        "DIAMANTE_CLAVE_CIFRADO (32 bytes en base64; genere una con `openssl rand -base64 32`)"
+                            .to_owned(),
+                    );
+                    None
+                }
+            },
+            None => {
+                if entorno == Entorno::Produccion {
+                    faltantes.push("DIAMANTE_CLAVE_CIFRADO");
+                }
+                None
+            }
+        };
+
+        let rutas_de_pruebas = match leer("DIAMANTE_PRUEBAS_E2E").as_deref() {
+            None | Some("false") => false,
+            Some("true") if entorno == Entorno::Produccion => {
+                invalidas.push("DIAMANTE_PRUEBAS_E2E=true no se permite en producción".to_owned());
+                false
+            }
+            Some("true") => true,
+            Some(otro) => {
+                invalidas.push(format!("DIAMANTE_PRUEBAS_E2E={otro} (use true o false)"));
+                false
+            }
+        };
+
         if !faltantes.is_empty() || !invalidas.is_empty() {
             return Err(ErrorConfiguracion { faltantes, invalidas });
         }
@@ -244,8 +312,22 @@ impl Configuracion {
             origenes_permitidos,
             confiar_proxy,
             smtp,
+            archivos_dir,
+            clave_firma,
+            clave_cifrado,
+            rutas_de_pruebas,
         })
     }
+}
+
+/// Clave de 32 bytes en base64 (estándar o URL, con o sin relleno).
+fn decodificar_clave(texto: &str) -> Option<[u8; 32]> {
+    let limpio = texto.trim();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(limpio)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(limpio.trim_end_matches('=')))
+        .ok()?;
+    bytes.try_into().ok()
 }
 
 /// `https://diamante.co/ruta` → `https://diamante.co` (esquema, host y puerto).
@@ -283,12 +365,24 @@ mod pruebas {
         assert_eq!(c.formato_logs, FormatoLogs::Texto);
     }
 
+    /// Claves válidas de producción para las pruebas.
+    const FIRMA: (&str, &str) = (
+        "DIAMANTE_CLAVE_FIRMA",
+        "una-clave-de-firma-de-al-menos-32-caracteres",
+    );
+    const CIFRADO: (&str, &str) = (
+        "DIAMANTE_CLAVE_CIFRADO",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    );
+
     #[test]
     fn produccion_registra_en_json() {
         let c = Configuracion::desde(fuente(&[
             ("DATABASE_URL", "x"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co/"),
+            FIRMA,
+            CIFRADO,
         ]))
         .unwrap();
         assert_eq!(c.formato_logs, FormatoLogs::Json);
@@ -300,9 +394,61 @@ mod pruebas {
         let error = Configuracion::desde(fuente(&[
             ("DATABASE_URL", "x"),
             ("DIAMANTE_ENTORNO", "produccion"),
+            FIRMA,
+            CIFRADO,
         ]))
         .unwrap_err();
         assert_eq!(error.faltantes, ["DIAMANTE_URL_PUBLICA"]);
+    }
+
+    #[test]
+    fn produccion_exige_las_claves_y_las_valida() {
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            error.faltantes,
+            ["DIAMANTE_CLAVE_FIRMA", "DIAMANTE_CLAVE_CIFRADO"]
+        );
+
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_CLAVE_FIRMA", "corta"),
+            ("DIAMANTE_CLAVE_CIFRADO", "no-es-base64-de-32-bytes"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.invalidas.len(), 2);
+
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x"), FIRMA, CIFRADO])).unwrap();
+        assert_eq!(c.clave_cifrado.as_ref().map(|c| c.0[31]), Some(31));
+        assert!(!format!("{c:?}").contains("una-clave-de-firma"));
+    }
+
+    #[test]
+    fn las_rutas_de_pruebas_nunca_se_activan_en_produccion() {
+        let c =
+            Configuracion::desde(fuente(&[("DATABASE_URL", "x"), ("DIAMANTE_PRUEBAS_E2E", "true")])).unwrap();
+        assert!(c.rutas_de_pruebas);
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
+            FIRMA,
+            CIFRADO,
+            ("DIAMANTE_PRUEBAS_E2E", "true"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn en_desarrollo_las_claves_y_la_carpeta_tienen_valores_por_defecto() {
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        assert!(c.clave_firma.is_none() && c.clave_cifrado.is_none());
+        assert_eq!(c.archivos_dir, PathBuf::from("/datos/archivos"));
     }
 
     #[test]
@@ -353,7 +499,7 @@ mod pruebas {
 
     #[test]
     fn no_imprime_secretos() {
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app:clave@db/x")])).unwrap();
-        assert!(!format!("{c:?}").contains("clave"));
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app:secreto-xyz@db/x")])).unwrap();
+        assert!(!format!("{c:?}").contains("secreto-xyz"));
     }
 }

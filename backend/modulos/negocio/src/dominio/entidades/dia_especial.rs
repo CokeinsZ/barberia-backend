@@ -110,6 +110,16 @@ impl DiaEspecial {
         })
     }
 
+    /// Festivo precargado por el sistema (RF-CFG-05).
+    pub(crate) fn festivo_automatico(fecha: NaiveDate, nombre: String) -> Self {
+        Self {
+            fecha,
+            nombre,
+            tipo: TipoDiaEspecial::Festivo,
+            origen: OrigenDiaEspecial::Automatico,
+        }
+    }
+
     /// Reconstruye un día ya guardado (los datos se validaron al registrarlo).
     pub(crate) fn reconstruir(
         fecha: NaiveDate,

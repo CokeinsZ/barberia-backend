@@ -13,7 +13,7 @@ use nucleo::identificadores::IdUsuario;
 use nucleo::{Actor, Correo, ErrorPersistencia, Reloj, Transacciones};
 use plataforma::seguridad::Huella;
 
-use super::dto::AdministradorDto;
+use super::dto::{AdministradorDto, CuentaPersonalDto};
 use super::errores::ErrorIdentidad;
 use crate::api::PerfilesBarberos;
 use crate::dominio::{ContrasenaNueva, DuracionSesion, NombrePersona, PropositoToken, Rol, Usuario};
@@ -58,6 +58,29 @@ pub(crate) trait RepositorioUsuarios<C: Send>: Send + Sync + fmt::Debug {
     async fn administradores_activos(&self, cx: &mut C) -> Result<Vec<IdUsuario>, ErrorPersistencia>;
 
     async fn cambiar_activo(&self, cx: &mut C, id: IdUsuario, activo: bool) -> Result<(), ErrorPersistencia>;
+
+    /// Crea la cuenta de un barbero, sin contraseña. `Duplicado` si el correo ya existe.
+    async fn crear_barbero(
+        &self,
+        cx: &mut C,
+        correo: &Correo,
+        activo: bool,
+        ahora: DateTime<Utc>,
+    ) -> Result<IdUsuario, ErrorPersistencia>;
+
+    /// `Duplicado` si el correo ya es de otra cuenta.
+    async fn cambiar_correo(
+        &self,
+        cx: &mut C,
+        id: IdUsuario,
+        correo: &Correo,
+    ) -> Result<(), ErrorPersistencia>;
+
+    async fn resumen_cuenta(
+        &self,
+        cx: &mut C,
+        id: IdUsuario,
+    ) -> Result<Option<CuentaPersonalDto>, ErrorPersistencia>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +194,38 @@ pub(crate) struct Identificacion {
 }
 
 impl<C: Send> Puertos<C> {
+    /// Emite un enlace de activación (invalida los anteriores) y encola el correo de invitación.
+    /// Devuelve el enlace.
+    pub(crate) async fn enviar_invitacion(
+        &self,
+        cx: &mut C,
+        usuario: IdUsuario,
+        correo: &Correo,
+        nombre: &str,
+        rol: &str,
+    ) -> Result<String, ErrorIdentidad> {
+        let (token, huella) = plataforma::seguridad::generar_token()?;
+        let proposito = PropositoToken::Activacion;
+        self.tokens
+            .emitir(cx, usuario, proposito, &huella, self.reloj.ahora())
+            .await?;
+        let enlace = proposito.enlace(&self.url_publica, &token);
+        self.buzon
+            .encolar_correo(
+                cx,
+                notificaciones::api::CorreoSaliente {
+                    destinatario: correo.clone(),
+                    plantilla: notificaciones::api::PlantillaCorreo::InvitacionPersonal {
+                        nombre: nombre.to_owned(),
+                        rol: rol.to_owned(),
+                        enlace: enlace.clone(),
+                    },
+                },
+            )
+            .await?;
+        Ok(enlace)
+    }
+
     pub(crate) async fn identificar(
         &self,
         cx: &mut C,

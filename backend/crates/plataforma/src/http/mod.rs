@@ -3,6 +3,7 @@
 
 mod cookies;
 mod entrada;
+mod formulario;
 mod ip;
 mod origen;
 mod problema;
@@ -10,6 +11,7 @@ mod sesion;
 
 pub use cookies::{TokenSesion, cookie_sesion, cookie_sesion_vencida};
 pub use entrada::{Entrada, Parametros};
+pub use formulario::{ArchivoSubido, Formulario};
 pub use ip::{ConfianzaProxy, IpCliente};
 pub use origen::{OrigenesPermitidos, verificar_origen};
 pub use problema::{ErrorHttp, estado_de};

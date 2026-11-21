@@ -21,6 +21,10 @@ x-entorno-app: &entorno-app
   DIAMANTE_URL_PUBLICA: ${DIAMANTE_URL_PUBLICA:-}
   DIAMANTE_ORIGENES: ${DIAMANTE_ORIGENES:-}
   DIAMANTE_CONFIAR_PROXY: ${DIAMANTE_CONFIAR_PROXY:-false}
+  DIAMANTE_PRUEBAS_E2E: ${DIAMANTE_PRUEBAS_E2E:-false}
+  # Firmas de las URL de descarga y cifrado de los datos sensibles (obligatorias en producción).
+  DIAMANTE_CLAVE_FIRMA: ${DIAMANTE_CLAVE_FIRMA:-}
+  DIAMANTE_CLAVE_CIFRADO: ${DIAMANTE_CLAVE_CIFRADO:-}
 
 services:
   db:
@@ -56,6 +60,9 @@ services:
     command: ["api"]
     environment:
       <<: *entorno-app
+    # Fotos y documentos (en producción Caddy sirve /media/publico desde este mismo volumen).
+    volumes:
+      - archivos:/datos/archivos
     depends_on:
       migraciones: { condition: service_completed_successfully }
     healthcheck:
@@ -81,3 +88,4 @@ services:
 
 volumes:
   db_datos:
+  archivos:

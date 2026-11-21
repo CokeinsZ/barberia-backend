@@ -1,6 +1,6 @@
 //! Datos que salen de los casos de uso. Son los mismos que ven la API HTTP y los demás módulos.
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use nucleo::Porcentaje;
 use nucleo::identificadores::IdDiaEspecial;
 use serde::Serialize;
@@ -68,4 +68,36 @@ impl DiaEspecialDto {
             automatico: dia.origen() == OrigenDiaEspecial::Automatico,
         }
     }
+}
+
+/// Horario de atención de un día de la semana (RF-CFG-03, DA-10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HorarioDiaDto {
+    /// 1 = lunes … 7 = domingo.
+    pub dia_semana: u8,
+    pub nombre: &'static str,
+    /// `false` si ningún barbero vigente trabaja ese día.
+    pub abierto: bool,
+    pub abre: Option<NaiveTime>,
+    pub cierra: Option<NaiveTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PoliticaDto {
+    pub id: i64,
+    pub tipo: &'static str,
+    pub version: String,
+    pub url: String,
+    pub vigente_desde: DateTime<Utc>,
+    /// La versión que rige hoy para su tipo: la más reciente que ya empezó.
+    pub vigente: bool,
+}
+
+/// Resultado de la precarga de festivos (RF-CFG-05).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FestivosPrecargadosDto {
+    pub anio: i32,
+    pub creados: Vec<DiaEspecialDto>,
+    /// Fechas que ya tenían un día especial (se respeta lo existente) o que ya pasaron.
+    pub omitidos: usize,
 }

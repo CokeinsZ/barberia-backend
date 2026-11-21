@@ -9,7 +9,7 @@ use plataforma::base_datos::{UnidadDeTrabajo, a_error_persistencia};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
-use crate::api::{BuzonSalida, CorreoSaliente};
+use crate::api::{BuzonSalida, CorreoSaliente, WhatsAppSaliente};
 use crate::aplicacion::puertos::{CorreoPendiente, RepositorioCorreos};
 
 /// Encola dentro de la unidad de trabajo de quien llama (patrón outbox).
@@ -52,6 +52,34 @@ impl BuzonSalida<UnidadDeTrabajo> for BuzonPg {
         .await
         .map_err(a_error_persistencia)?;
         Ok(())
+    }
+
+    async fn encolar_whatsapp(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        mensaje: WhatsAppSaliente,
+    ) -> Result<i64, ErrorPersistencia> {
+        let contiene_secreto = mensaje.plantilla.contiene_secreto();
+        let mut valor = serde_json::to_value(&mensaje.plantilla)
+            .map_err(|e| ErrorPersistencia::Otro(format!("plantilla no serializable: {e}")))?;
+        let plantilla = valor["plantilla"].as_str().unwrap_or_default().to_owned();
+        let variables = valor["variables"].take();
+        let ahora = self.reloj.ahora();
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO notificaciones.mensaje
+                 (canal, plantilla, destinatario, variables, contiene_secreto, programado_para, creado_en)
+             VALUES ('whatsapp', $1, $2, $3, $4, $5, $5)
+             RETURNING id",
+        )
+        .bind(plantilla)
+        .bind(mensaje.destinatario.digitos())
+        .bind(variables)
+        .bind(contiene_secreto)
+        .bind(ahora)
+        .fetch_one(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(id)
     }
 }
 
@@ -167,4 +195,30 @@ impl RepositorioCorreos for RepositorioCorreosPg {
         .map_err(a_error_persistencia)?;
         Ok(())
     }
+}
+
+/// Mensajes recientes de un destinatario, para las pruebas (WhatsApp simulado).
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub(crate) struct MensajeDePrueba {
+    id: i64,
+    canal: String,
+    plantilla: String,
+    destinatario: String,
+    variables: Value,
+    estado: String,
+    creado_en: DateTime<Utc>,
+}
+
+pub(crate) async fn mensajes_recientes(
+    pool: &PgPool,
+    destinatario: &str,
+) -> Result<Vec<MensajeDePrueba>, ErrorPersistencia> {
+    sqlx::query_as(
+        "SELECT id, canal::text AS canal, plantilla, destinatario, variables, estado::text AS estado, creado_en
+         FROM notificaciones.mensaje WHERE destinatario = $1 ORDER BY id DESC LIMIT 20",
+    )
+    .bind(destinatario)
+    .fetch_all(pool)
+    .await
+    .map_err(a_error_persistencia)
 }
