@@ -8,7 +8,8 @@ está implementado y qué prueba automática lo respalda.
 
 - **Corregido en esta revisión**:
   1. Con «Cualquier barbero», dos reservas simultáneas podían responder `500`: era un bloqueo
-     mutuo de PostgreSQL en la restricción de exclusión de las citas. Ahora se reintenta (V11).
+     mutuo de PostgreSQL en la restricción de exclusión de las citas. Ahora las citas de un
+     mismo barbero se guardan por turnos y la que pierde se reasigna a otro barbero libre (V11).
   2. Las sesiones no tenían vida máxima: con «Recordarme» y uso diario no vencían nunca. Ahora
      vencen a los 30 días de iniciarse (V3.3.2).
   3. Faltaban las cabeceras de seguridad en la API (HSTS incluido, al retirar Caddy), los límites
@@ -110,7 +111,7 @@ seguridad) dentro de la mayor.
 | Control | Implementación | Prueba |
 |---|---|---|
 | Límites de uso | 120/min por IP en lo público, 600/min por sesión y 1.200/min por IP en el panel, 120/min sin sesión; `429` con `Retry-After`. Inventar cookies o falsificar `X-Forwarded-For` no los evita | unitarias; en Docker, 120 peticiones pasan y el resto recibe `429` (también con `X-Forwarded-For` falsos detrás de Traefik) |
-| Sin dobles reservas ni cobros dobles | Restricción de exclusión en `agenda.cita`, `UNIQUE (cita_id)` en ventas, contador de tiquetes bloqueado | `reservas_y_ventas_simultaneas` |
+| Sin dobles reservas ni cobros dobles | Restricción de exclusión en `agenda.cita`, con las citas de cada barbero guardadas por turnos (`pg_advisory_xact_lock`: sin bloqueos mutuos) y reintento con otro barbero si «Cualquier barbero» pierde la carrera; `UNIQUE (cita_id)` en ventas; contador de tiquetes bloqueado | `reservas_y_ventas_simultaneas` (también con 4 copias en paralelo) |
 | Carreras | Reserva en línea por la misma hora, celulares repetidos, métricas del cliente con ventas simultáneas, anulaciones y cierres dobles, transiciones cruzadas de una cita, varios workers a la vez | `carreras_de_clientes_ventas_agenda_y_worker` (repetidas 15 veces sin fallar) |
 
 ## V12 · Archivos

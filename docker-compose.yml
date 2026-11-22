@@ -19,7 +19,10 @@ x-backend: &backend
 # Variables de la aplicación que comparten la API y el worker. Las vacías se ignoran; en
 # producción, DIAMANTE_URL_PUBLICA es obligatoria y el proceso no arranca sin ella.
 x-entorno-app: &entorno-app
-  DATABASE_URL: postgres://diamante_app:${DIAMANTE_APP_PASSWORD}@db:5432/diamante
+  # La contraseña va aparte (PGPASSWORD), no dentro de la URL: así sirve cualquier carácter
+  # (también / + = de las claves en base64).
+  DATABASE_URL: ${DIAMANTE_DB_URL:-postgres://diamante_app@db:5432/diamante}
+  PGPASSWORD: ${DIAMANTE_APP_PASSWORD}
   DIAMANTE_ENTORNO: ${DIAMANTE_ENTORNO:-produccion}
   DIAMANTE_URL_PUBLICA: ${DIAMANTE_URL_PUBLICA:-}
   DIAMANTE_ORIGENES: ${DIAMANTE_ORIGENES:-}
@@ -61,7 +64,8 @@ services:
     <<: *backend
     command: ["migrar"]
     environment:
-      DATABASE_URL: postgres://diamante_propietario:${POSTGRES_PASSWORD}@db:5432/diamante
+      DATABASE_URL: postgres://diamante_propietario@db:5432/diamante
+      PGPASSWORD: ${POSTGRES_PASSWORD}
       DIAMANTE_ENTORNO: ${DIAMANTE_ENTORNO:-produccion}
     depends_on:
       db: { condition: service_healthy }

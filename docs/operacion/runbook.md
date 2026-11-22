@@ -39,8 +39,10 @@ de la prueba de restauración).
    aislado (*Isolated Deployment*): evita que nombres como `db` o `api` choquen con los de otras
    aplicaciones del servidor.
 3. **Variables** (pestaña *Environment*; Dokploy las escribe en el `.env` del proyecto): ver la
-   sección 3. **Todas antes del primer despliegue**: el rol de respaldos se crea solo junto con
-   el volumen de la base.
+   sección 3. **Todas antes del primer despliegue**: las contraseñas de los roles de la base
+   (y el de respaldos) quedan fijadas cuando se crea su volumen. Si cambia una contraseña de la
+   base después, hay que cambiarla también dentro (`ALTER ROLE`, sección 10) o, si la base aún
+   no tiene datos, borrar el volumen `APP_db_datos` y desplegar de nuevo.
 4. **Dominios** (pestaña *Domains*), con HTTPS y certificado de Let's Encrypt:
 
    | Servicio | Host | Path | Puerto | *Strip path* |
@@ -60,20 +62,21 @@ de la prueba de restauración).
 
 ## 3. Variables de producción
 
-Generar los valores en su equipo y pegarlos en *Environment*. Las contraseñas, sin caracteres
-especiales de URL (van dentro de `DATABASE_URL`).
+Generar los valores en su equipo y pegarlos en *Environment*. Las contraseñas pueden tener
+cualquier carácter: `docker-compose.yml` las pasa en `PGPASSWORD`, no dentro de la URL de la
+base. **Cada variable con su propio valor** (no reutilice la misma clave).
 
 | Variable | Valor | Cómo generarla |
 |---|---|---|
-| `POSTGRES_PASSWORD` | Rol propietario (migraciones, restauraciones) | `openssl rand -hex 24` |
-| `DIAMANTE_APP_PASSWORD` | Rol de la aplicación | `openssl rand -hex 24` |
-| `DIAMANTE_RESPALDO_PASSWORD` | Rol de los respaldos | `openssl rand -hex 24` |
+| `POSTGRES_PASSWORD` | Rol propietario (migraciones, restauraciones) | `openssl rand -base64 32` |
+| `DIAMANTE_APP_PASSWORD` | Rol de la aplicación | `openssl rand -base64 32` |
+| `DIAMANTE_RESPALDO_PASSWORD` | Rol de los respaldos | `openssl rand -base64 32` |
 | `DIAMANTE_ENTORNO` | `produccion` (es el valor por defecto) | — |
 | `DIAMANTE_URL_PUBLICA` | `https://diamante.co` (sin barra final) | — |
 | `DIAMANTE_CONFIAR_PROXY` | `true`: la IP del cliente viene de Traefik | — |
 | `DIAMANTE_CLAVE_FIRMA` | Firma de las URL de descarga | `openssl rand -base64 48` |
 | `DIAMANTE_CLAVE_CIFRADO` | Cifrado de los datos privados de los barberos | `openssl rand -base64 32` |
-| `DIAMANTE_SMTP_HOST`, `_PUERTO`, `_SEGURIDAD`, `_USUARIO`, `_CLAVE`, `_REMITENTE` | Correo saliente (invitaciones, recuperación) | Del proveedor de correo |
+| `DIAMANTE_SMTP_HOST`, `_PUERTO`, `_SEGURIDAD`, `_USUARIO`, `_CLAVE`, `_REMITENTE` | Correo saliente (invitaciones, recuperación). Puerto 465 con `tls` o 587 con `starttls` (la combinación cruzada no arranca). Gmail: clave de aplicación sin espacios | Del proveedor de correo |
 | `DIAMANTE_RESPALDO_REMOTO` | `cifrado:` | Sección 5 |
 | `DIAMANTE_RESPALDO_RCLONE_CONF_B64` | Configuración de rclone en base64 | Sección 5 |
 
@@ -256,7 +259,8 @@ de seguridad:
 | 429 `demasiados_intentos` | Límite de uso (120/min por IP en lo público, 600/min por sesión en el panel) o de inicios de sesión (10 por IP cada 15 min) | Esperar el `Retry-After`; si es tráfico legítimo detrás de una misma IP, revisar los límites y la nota de Cloudflare |
 | «Credenciales inválidas» con la contraseña correcta | Cuenta bloqueada 15 minutos tras 5 fallos | Esperar 15 minutos o «Olvidé mi contraseña» |
 | La sesión pide entrar de nuevo | 12 h sin uso, 30 días con «Recordarme», o 30 días desde el inicio aunque se use | Comportamiento esperado (seguridad) |
-| La API no arranca | Configuración inválida | Sus logs dicen qué falta o qué está mal |
+| La API, el worker o las migraciones no arrancan | Configuración inválida | Sus logs dicen qué falta o qué está mal (`Configuración inválida. Faltan: … Inválidas: …`) |
+| `password authentication failed` | La contraseña de *Environment* no es la que tiene el rol en la base (se fijó al crear el volumen) | `ALTER ROLE` con la nueva, o borrar el volumen si aún no hay datos |
 | El despliegue falla al compilar | Memoria insuficiente en el VPS | Agregar memoria de intercambio o RAM |
 
 ## 10. Rotación de secretos

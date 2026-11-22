@@ -1,7 +1,8 @@
 # Atajos del monorepo. Lee .env si existe.
 -include .env
 
-PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario:$(POSTGRES_PASSWORD)@127.0.0.1:5432/postgres
+# La contraseña va en PGPASSWORD (no en la URL), así sirve cualquier carácter.
+PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario@127.0.0.1:5432/postgres
 
 .PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema \
 	rol-respaldo respaldo probar-restauracion coleccion rendimiento
@@ -35,10 +36,10 @@ backend-lint: ## Verifica el formato y clippy sin advertencias
 	cd backend && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 
 backend-pruebas: ## Pruebas unitarias y de integración (necesita la base de datos de `make dev`)
-	cd backend && PRUEBAS_DATABASE_URL=$(PRUEBAS_DATABASE_URL) cargo test --workspace
+	cd backend && PGPASSWORD=$(POSTGRES_PASSWORD) PRUEBAS_DATABASE_URL=$(PRUEBAS_DATABASE_URL) cargo test --workspace
 
 verificar-esquema: ## Compara las migraciones con docs/diseno/esquema.sql y corre las 27 pruebas
-	cd backend && PRUEBAS_DATABASE_URL=$(PRUEBAS_DATABASE_URL) ./scripts/verificar-esquema.sh
+	cd backend && PGPASSWORD=$(POSTGRES_PASSWORD) PRUEBAS_DATABASE_URL=$(PRUEBAS_DATABASE_URL) ./scripts/verificar-esquema.sh
 
 rol-respaldo: ## Crea el rol diamante_respaldo en una base ya existente (usa DIAMANTE_RESPALDO_PASSWORD)
 	@test -n "$(DIAMANTE_RESPALDO_PASSWORD)" || (echo 'Defina DIAMANTE_RESPALDO_PASSWORD en .env' && exit 2)

@@ -74,6 +74,21 @@ impl TryFrom<Fila> for CitaGuardada {
     }
 }
 
+/// Espacio de los candados de transacción de la agenda (`pg_advisory_xact_lock(espacio, clave)`).
+const CANDADO_AGENDA_DEL_BARBERO: i32 = 1;
+
+/// Pone en fila las transacciones que guardan o mueven citas del mismo barbero hasta que la
+/// primera termine (RNF-INT-01). Sin esto, dos citas simultáneas que se cruzan pueden esperarse
+/// la una a la otra en la restricción de exclusión `cita_sin_solape` (bloqueo mutuo: PostgreSQL
+/// aborta una tras un segundo). Con el turno, la segunda ve la primera ya guardada y recibe el
+/// conflicto de inmediato.
+async fn turno_del_barbero(uow: &mut UnidadDeTrabajo, barbero: IdBarbero) -> Result<(), ErrorPersistencia> {
+    let clave = i32::try_from(barbero.0).unwrap_or(i32::MAX);
+    uow.bloquear_clave(CANDADO_AGENDA_DEL_BARBERO, clave)
+        .await
+        .map_err(a_error_persistencia)
+}
+
 #[async_trait]
 impl RepositorioAgenda<UnidadDeTrabajo> for RepositorioAgendaPg {
     async fn configuracion(
@@ -150,6 +165,7 @@ impl RepositorioAgenda<UnidadDeTrabajo> for RepositorioAgendaPg {
     }
 
     async fn crear(&self, uow: &mut UnidadDeTrabajo, c: &NuevaCita) -> Result<IdCita, ErrorPersistencia> {
+        turno_del_barbero(uow, c.barbero).await?;
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO agenda.cita (cliente_id, barbero_id, servicio_id, inicio, fin, precio, estado, origen,
                                       asignacion_automatica, nota, creada_por, creada_en, actualizado_en)
@@ -271,6 +287,7 @@ impl RepositorioAgenda<UnidadDeTrabajo> for RepositorioAgendaPg {
         fin: DateTime<Utc>,
         asignacion_automatica: bool,
     ) -> Result<(), ErrorPersistencia> {
+        turno_del_barbero(uow, barbero).await?;
         sqlx::query("UPDATE agenda.cita SET barbero_id = $2, inicio = $3, fin = $4, asignacion_automatica = $5 WHERE id = $1")
             .bind(id.0)
             .bind(barbero.0)

@@ -156,6 +156,12 @@ impl Configuracion {
         leer: impl Fn(&str) -> Option<String>,
     ) -> Result<(Secreto, FormatoLogs), ErrorConfiguracion> {
         let url = leer("MIGRACIONES_DATABASE_URL").or_else(|| leer("DATABASE_URL"));
+        if let Some(error) = url.as_deref().and_then(|u| url_invalida("DATABASE_URL", u)) {
+            return Err(ErrorConfiguracion {
+                faltantes: Vec::new(),
+                invalidas: vec![error],
+            });
+        }
         let produccion = leer("DIAMANTE_ENTORNO").as_deref() == Some("produccion");
         let formato = match leer("DIAMANTE_LOGS").as_deref() {
             Some("json") => Some(FormatoLogs::Json),
@@ -211,6 +217,11 @@ impl Configuracion {
             faltantes.push("DATABASE_URL");
         }
         let url = url.unwrap_or_default();
+        if !url.is_empty()
+            && let Some(error) = url_invalida("DATABASE_URL", &url)
+        {
+            invalidas.push(error);
+        }
         let url_migraciones = leer("MIGRACIONES_DATABASE_URL").unwrap_or_else(|| url.clone());
 
         let max_conexiones = match leer("DIAMANTE_DB_MAX_CONEXIONES") {
@@ -293,6 +304,20 @@ impl Configuracion {
                     puerto_defecto
                 }),
             };
+            // Las dos combinaciones cruzadas de los puertos estándar dejan el envío colgado.
+            match (puerto, seguridad) {
+                (465, SeguridadSmtp::StartTls) => invalidas.push(
+                    "DIAMANTE_SMTP_PUERTO=465 usa TLS directo: ponga DIAMANTE_SMTP_SEGURIDAD=tls \
+                     (o el puerto 587 con starttls)"
+                        .to_owned(),
+                ),
+                (587, SeguridadSmtp::Tls) => invalidas.push(
+                    "DIAMANTE_SMTP_PUERTO=587 usa STARTTLS: ponga DIAMANTE_SMTP_SEGURIDAD=starttls \
+                     (o el puerto 465 con tls)"
+                        .to_owned(),
+                ),
+                _ => {}
+            }
             let remitente = leer("DIAMANTE_SMTP_REMITENTE").unwrap_or_else(|| {
                 faltantes.push("DIAMANTE_SMTP_REMITENTE");
                 String::new()
@@ -434,6 +459,19 @@ impl Configuracion {
     }
 }
 
+/// Explica por qué no sirve una URL de PostgreSQL, sin mostrarla (puede llevar la contraseña).
+fn url_invalida(variable: &str, url: &str) -> Option<String> {
+    use std::str::FromStr;
+    sqlx::postgres::PgConnectOptions::from_str(url)
+        .err()
+        .map(|error| {
+            format!(
+                "{variable} no es una URL de PostgreSQL válida ({error}). Si la contraseña tiene / @ : ? # \
+             o %, no la ponga en la URL: use PGPASSWORD (así lo hace docker-compose.yml)"
+            )
+        })
+}
+
 /// Clave de 32 bytes en base64 (estándar o URL, con o sin relleno).
 fn decodificar_clave(texto: &str) -> Option<[u8; 32]> {
     let limpio = texto.trim();
@@ -492,7 +530,7 @@ mod pruebas {
     #[test]
     fn produccion_registra_en_json() {
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co/"),
             FIRMA,
@@ -506,7 +544,7 @@ mod pruebas {
     #[test]
     fn produccion_exige_la_url_publica() {
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             FIRMA,
             CIFRADO,
@@ -518,7 +556,7 @@ mod pruebas {
     #[test]
     fn produccion_exige_las_claves_y_las_valida() {
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
         ]))
@@ -529,25 +567,33 @@ mod pruebas {
         );
 
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_CLAVE_FIRMA", "corta"),
             ("DIAMANTE_CLAVE_CIFRADO", "no-es-base64-de-32-bytes"),
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 2);
 
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x"), FIRMA, CIFRADO])).unwrap();
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "postgres://app@db/diamante"),
+            FIRMA,
+            CIFRADO,
+        ]))
+        .unwrap();
         assert_eq!(c.clave_cifrado.as_ref().map(|c| c.0[31]), Some(31));
         assert!(!format!("{c:?}").contains("una-clave-de-firma"));
     }
 
     #[test]
     fn las_rutas_de_pruebas_nunca_se_activan_en_produccion() {
-        let c =
-            Configuracion::desde(fuente(&[("DATABASE_URL", "x"), ("DIAMANTE_PRUEBAS_E2E", "true")])).unwrap();
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "postgres://app@db/diamante"),
+            ("DIAMANTE_PRUEBAS_E2E", "true"),
+        ]))
+        .unwrap();
         assert!(c.rutas_de_pruebas);
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
             FIRMA,
@@ -560,16 +606,16 @@ mod pruebas {
 
     #[test]
     fn los_limites_de_uso_solo_se_apagan_fuera_de_produccion() {
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app@db/diamante")])).unwrap();
         assert!(c.limites_de_uso);
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_LIMITES_DE_USO", "false"),
         ]))
         .unwrap();
         assert!(!c.limites_de_uso);
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
             FIRMA,
@@ -578,6 +624,40 @@ mod pruebas {
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn una_contrasena_con_barras_en_la_url_da_un_error_claro_sin_mostrarla() {
+        let url = "postgres://diamante_app:xXlv/7fF+C=@db:5432/diamante";
+        let error = Configuracion::desde(fuente(&[("DATABASE_URL", url)])).unwrap_err();
+        assert_eq!(error.invalidas.len(), 1, "{error:?}");
+        assert!(error.invalidas[0].contains("PGPASSWORD") && !error.invalidas[0].contains("xXlv"));
+        let error = Configuracion::para_migraciones(fuente(&[("DATABASE_URL", url)])).unwrap_err();
+        assert!(error.invalidas[0].contains("PGPASSWORD"));
+        // Sin contraseña en la URL (va en PGPASSWORD), cualquier carácter sirve.
+        assert!(
+            Configuracion::desde(fuente(&[(
+                "DATABASE_URL",
+                "postgres://diamante_app@db:5432/diamante"
+            )]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn smtp_avisa_si_el_puerto_no_corresponde_a_la_seguridad() {
+        let con = |puerto: &str, seguridad: &str| {
+            Configuracion::desde(fuente(&[
+                ("DATABASE_URL", "postgres://app@db/diamante"),
+                ("DIAMANTE_SMTP_HOST", "smtp.gmail.com"),
+                ("DIAMANTE_SMTP_PUERTO", puerto),
+                ("DIAMANTE_SMTP_SEGURIDAD", seguridad),
+                ("DIAMANTE_SMTP_REMITENTE", "a@b.co"),
+            ]))
+        };
+        assert!(con("465", "starttls").unwrap_err().invalidas[0].contains("tls"));
+        assert!(con("587", "tls").is_err());
+        assert!(con("465", "tls").is_ok() && con("587", "starttls").is_ok());
     }
 
     #[test]
@@ -604,16 +684,16 @@ mod pruebas {
 
     #[test]
     fn gotenberg_es_opcional_y_debe_ser_una_url() {
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app@db/diamante")])).unwrap();
         assert!(c.gotenberg_url.is_none());
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_GOTENBERG_URL", "http://gotenberg:3000/"),
         ]))
         .unwrap();
         assert_eq!(c.gotenberg_url.as_deref(), Some("http://gotenberg:3000"));
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_GOTENBERG_URL", "gotenberg:3000"),
         ]))
         .unwrap_err();
@@ -622,10 +702,10 @@ mod pruebas {
 
     #[test]
     fn whatsapp_simulado_fuera_de_produccion_y_secretos_del_webhook_juntos() {
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app@db/diamante")])).unwrap();
         assert!(c.whatsapp.simulado && c.whatsapp.webhook.is_none() && !c.worker_en_api);
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_WHATSAPP_SECRETO_APP", "s"),
             ("DIAMANTE_WHATSAPP_TOKEN_VERIFICACION", "t"),
             ("DIAMANTE_WORKER_EN_API", "true"),
@@ -634,13 +714,13 @@ mod pruebas {
         assert!(c.whatsapp.webhook.is_some() && c.worker_en_api);
         assert!(!format!("{c:?}").contains("\"s\""));
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_WHATSAPP_SECRETO_APP", "s"),
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 1);
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_ENTORNO", "produccion"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
             FIRMA,
@@ -652,7 +732,7 @@ mod pruebas {
 
     #[test]
     fn en_desarrollo_las_claves_y_la_carpeta_tienen_valores_por_defecto() {
-        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app@db/diamante")])).unwrap();
         assert!(c.clave_firma.is_none() && c.clave_cifrado.is_none());
         assert_eq!(c.archivos_dir, PathBuf::from("/datos/archivos"));
     }
@@ -660,7 +740,7 @@ mod pruebas {
     #[test]
     fn deriva_los_origenes_permitidos() {
         let c = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_URL_PUBLICA", "https://diamante.co/sitio"),
             ("DIAMANTE_ORIGENES", " http://localhost:4321/ ,"),
         ]))
@@ -673,10 +753,10 @@ mod pruebas {
 
     #[test]
     fn configura_smtp_solo_si_hay_host() {
-        let sin = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        let sin = Configuracion::desde(fuente(&[("DATABASE_URL", "postgres://app@db/diamante")])).unwrap();
         assert!(sin.smtp.is_none());
         let con = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_SMTP_HOST", "mailpit"),
             ("DIAMANTE_SMTP_SEGURIDAD", "ninguna"),
             ("DIAMANTE_SMTP_REMITENTE", "Diamante <no-responder@diamante.co>"),
@@ -685,7 +765,7 @@ mod pruebas {
         let smtp = con.smtp.unwrap();
         assert_eq!((smtp.puerto, smtp.seguridad), (25, SeguridadSmtp::Ninguna));
         let error = Configuracion::desde(fuente(&[
-            ("DATABASE_URL", "x"),
+            ("DATABASE_URL", "postgres://app@db/diamante"),
             ("DIAMANTE_SMTP_HOST", "smtp.x.co"),
         ]))
         .unwrap_err();

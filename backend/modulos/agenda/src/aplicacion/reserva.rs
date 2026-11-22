@@ -133,8 +133,12 @@ impl<C: Send + 'static> Reserva<C> {
         };
         let id = match p.citas.crear(&mut cx, &nueva).await {
             Ok(id) => id,
-            // Otra persona tomó la hora entre la revalidación y el guardado (RNF-INT-01).
+            // Otra persona tomó la hora entre la revalidación y el guardado (RNF-INT-01). Con
+            // «Cualquier barbero» puede quedar otro libre: se reintenta con la disponibilidad nueva.
             Err(ErrorPersistencia::Conflicto { restriccion }) if restriccion == RESTRICCION_SOLAPE => {
+                if s.barbero_id.is_none() {
+                    return Err(ErrorAgenda::Persistencia(ErrorPersistencia::Concurrencia));
+                }
                 return Err(ErrorAgenda::ConflictoHorario {
                     alternativas: alternativas(&libres, inicio),
                 });

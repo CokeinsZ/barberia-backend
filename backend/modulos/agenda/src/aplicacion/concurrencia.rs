@@ -7,14 +7,14 @@ use nucleo::ErrorPersistencia;
 use super::errores::ErrorAgenda;
 
 /// Intentos de una operación antes de responder que la hora ya no está disponible.
-const INTENTOS: u32 = 3;
+const INTENTOS: u32 = 5;
 
-/// Repite la operación cuando PostgreSQL la abortó por un bloqueo mutuo o un fallo de
-/// serialización. Pasa, por ejemplo, cuando dos personas toman a la vez horas que se cruzan con
-/// «Cualquier barbero»: al revisar la restricción de exclusión de `agenda.cita`, cada
-/// transacción encuentra la fila sin confirmar de la otra y la espera. Cada intento es una
-/// transacción nueva que ya ve lo que la otra guardó: toma otro barbero libre o responde
-/// `409 conflicto_horario` con alternativas, nunca un error interno.
+/// Repite la operación cuando chocó con otra simultánea: un bloqueo mutuo o un fallo de
+/// serialización de PostgreSQL, o un barbero asignado automáticamente («Cualquier barbero») que
+/// otra persona acaba de ocupar. Cada intento es una transacción nueva que ya ve lo que la otra
+/// guardó: toma otro barbero libre o responde `409 conflicto_horario` con alternativas, nunca un
+/// error interno. Los bloqueos mutuos casi no ocurren desde que las citas de un mismo barbero se
+/// guardan por turnos (`turno_del_barbero` en el repositorio).
 pub(crate) async fn con_reintentos<T, F, Fut>(mut operacion: F) -> Result<T, ErrorAgenda>
 where
     F: FnMut() -> Fut,

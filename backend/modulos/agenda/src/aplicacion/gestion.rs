@@ -128,6 +128,9 @@ impl<C: Send + 'static> Gestion<C> {
         {
             Ok(()) => {}
             Err(ErrorPersistencia::Conflicto { restriccion }) if restriccion == RESTRICCION_SOLAPE => {
+                if barbero.is_none() {
+                    return Err(ErrorAgenda::Persistencia(ErrorPersistencia::Concurrencia));
+                }
                 return Err(ErrorAgenda::ConflictoHorario {
                     alternativas: alternativas(&libres, inicio),
                 });
