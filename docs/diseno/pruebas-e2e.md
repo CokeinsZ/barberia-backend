@@ -41,7 +41,7 @@ npx playwright test --project=movil-chrome   # o sin filtro para todos
 - PostgreSQL usa `tmpfs`: la base de datos vive en memoria y es rápida y desechable.
 - Se agrega Mailpit como servidor SMTP.
 - La caché de la landing dura 2 segundos, en lugar de 60, para probar RF-PUB-04 sin esperas largas.
-- Caddy sirve en `http://localhost:8080` con una configuración local.
+- La API responde directamente en `http://localhost:8080` (en producción va detrás del Traefik de Dokploy).
 
 ### 3.1 Datos y reloj
 

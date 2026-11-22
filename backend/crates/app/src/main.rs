@@ -42,6 +42,26 @@ async fn main() -> ExitCode {
     if comando == "salud" {
         return salud::verificar_desde_entorno().await;
     }
+    // Las migraciones solo necesitan la base: no exigen la URL pública ni las claves.
+    if comando == "migrar" {
+        let (url, formato) = match Configuracion::para_migraciones(|clave| {
+            std::env::var(clave).ok().filter(|v| !v.trim().is_empty())
+        }) {
+            Ok(c) => c,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(78); // EX_CONFIG
+            }
+        };
+        plataforma::telemetria::iniciar(formato);
+        return match migraciones::ejecutar(&url).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                tracing::error!(error = %error, "las migraciones fallaron");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     let configuracion = match Configuracion::desde_entorno() {
         Ok(configuracion) => configuracion,
@@ -55,7 +75,6 @@ async fn main() -> ExitCode {
     let resultado = match comando.as_str() {
         "api" => api(&configuracion).await,
         "worker" => worker::ejecutar(&configuracion).await,
-        "migrar" => migraciones::ejecutar(&configuracion).await,
         "crear-administrador" => match &argumentos[1..] {
             [correo, nombre @ ..] if !nombre.is_empty() => {
                 administracion::crear_administrador(&configuracion, correo, &nombre.join(" ")).await
@@ -90,7 +109,7 @@ async fn api(configuracion: &Configuracion) -> Result<(), ErrorDeArranque> {
     }
     let escucha = tokio::net::TcpListener::bind(configuracion.direccion_http).await?;
     tracing::info!(direccion = %configuracion.direccion_http, entorno = ?configuracion.entorno, "API escuchando");
-    // La IP de la conexión alimenta los límites de intentos (o `X-Forwarded-For` tras Caddy).
+    // La IP de la conexión alimenta los límites de intentos (o `X-Forwarded-For` tras el proxy).
     axum::serve(
         escucha,
         aplicacion.into_make_service_with_connect_info::<SocketAddr>(),

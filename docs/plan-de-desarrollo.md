@@ -10,7 +10,7 @@ Documentos relacionados: [visión](documento-vision.md), [base de datos](diseno/
 
 - **Monorepo**: backend (Rust + Axum), frontend (Astro + React), pruebas E2E (Playwright) e infraestructura en carpetas separadas de un mismo repositorio.
 - **Arquitectura**: monolito modular. Un solo despliegue, dividido en **13 módulos de negocio casi independientes**, cada uno en su carpeta, con sus capas en subcarpetas y comunicándose con los demás solo por interfaces públicas. Cada módulo tiene además su propio esquema en PostgreSQL.
-- **Despliegue**: Docker Compose con proxy (Caddy), frontend, API, worker, migraciones, PostgreSQL 18, Gotenberg y respaldos.
+- **Despliegue**: Docker Compose desplegado con Dokploy (su Traefik da HTTPS y enruta el dominio): frontend, API, worker, migraciones, PostgreSQL 18, Gotenberg y respaldos (ADR 0007).
 - **Fases**: 0 a 7 hasta el MVP (requisitos Must), más dos entregas posteriores (Should y Could). Estimación inicial: unas 17 semanas hasta el MVP con dos personas, a recalibrar al cerrar la fase 1.
 
 ---
@@ -34,7 +34,7 @@ Se revisó [VictorStore-Back](https://github.com/CokeinsZ/VictorStore-Back) (Nes
 | Los servicios lanzan excepciones HTTP | Errores de dominio tipados; solo la capa HTTP los traduce a respuestas (*Problem Details*). |
 | Interfaces y DTO se importan entre sí en círculo | Dependencias en una sola dirección (`http → aplicacion → dominio`), verificadas por el compilador. |
 | Un script SQL único, con triggers para borrar en cascada y borrado físico | Migraciones versionadas por módulo, llaves foráneas con la acción correcta y borrado lógico. |
-| Una contraseña escrita en `start.sh` y un certificado autofirmado generado dentro del contenedor de la app | Secretos fuera del repositorio (variables de entorno) y HTTPS en Caddy con certificados automáticos. |
+| Una contraseña escrita en `start.sh` y un certificado autofirmado generado dentro del contenedor de la app | Secretos fuera del repositorio (variables de entorno) y HTTPS con certificados automáticos en el proxy (Traefik de Dokploy). |
 | El prefijo de la ruta (`vs/api/v1/...`) se repite en cada controlador | `/api/v1` se define una sola vez en la raíz de composición. |
 | `console.log` de depuración | Logs estructurados con `tracing`. |
 | Sin pruebas más allá de la plantilla | Pirámide de pruebas: unitarias, de integración y E2E. |
@@ -373,14 +373,11 @@ infra/
 ├── docker/
 │   ├── backend.Dockerfile            # multietapa: compila con caché de dependencias → imagen mínima
 │   ├── frontend.Dockerfile           # multietapa: build de Astro → Node en modo standalone
-│   └── respaldo.Dockerfile           # PostgreSQL 18 + cron + scripts
-├── caddy/
-│   ├── Caddyfile                     # producción
-│   └── Caddyfile.local               # desarrollo y E2E (http://localhost:8080)
+│   └── respaldo.Dockerfile           # PostgreSQL 18 + rclone + scripts
 ├── postgres/
-│   └── init/00-roles.sql             # roles diamante_propietario, diamante_app y diamante_respaldo
+│   └── init/00-roles.sh              # roles diamante_app y diamante_respaldo (el propietario lo crea la imagen)
 └── respaldo/
-    ├── respaldar.sh                  # pg_dump diario + archivos + copia externa + retención de 30 días
+    ├── respaldar.sh                  # pg_dump cada hora y diario + archivos + copia externa cifrada + retención
     └── restaurar.sh
 ```
 
@@ -445,7 +442,7 @@ El CI verifica estas reglas: compila cada crate por separado, ejecuta las reglas
 - **Configuración**: variables de entorno validadas al arrancar; el proceso no inicia si falta alguna.
 - **Tiempo**: siempre a través del trait `Reloj`; nada llama a `Utc::now()` directamente.
 - **Dinero**: tipo `Dinero` (entero en pesos) con operaciones que no permiten negativos.
-- **Seguridad**: Argon2id, sesiones en el servidor, `SameSite=Strict` + verificación de `Origin`, límites de uso, secretos solo en variables de entorno, cabeceras de seguridad en Caddy.
+- **Seguridad**: Argon2id, sesiones en el servidor, `SameSite=Strict` + verificación de `Origin`, límites de uso, secretos solo en variables de entorno, cabeceras de seguridad en la API (y HTTPS en el Traefik de Dokploy).
 - **Observabilidad**: `tracing` con un id por solicitud; ningún dato personal sensible en los logs.
 - **Estilo**: `rustfmt` y `clippy -D warnings`; ESLint y Prettier en el frontend. Nombres del dominio en español, iguales en el código y en la base de datos.
 - **Dependencias principales del backend**: `axum`, `tokio`, `tower-http`, `sqlx` (PostgreSQL), `serde`, `thiserror`, `tracing`, `utoipa`, `argon2`, `hmac` + `sha2`, `aes-gcm`, `chrono` + `chrono-tz`, `reqwest` (Meta y Gotenberg), `lettre` (SMTP), `askama` (plantillas HTML de los reportes), `rust_xlsxwriter`, `tower_governor` (límites de uso). Los puertos asíncronos usados como objetos dinámicos se declaran con `async-trait` mientras el lenguaje no lo resuelva de forma nativa.
@@ -454,18 +451,20 @@ El CI verifica estas reglas: compila cada crate por separado, ejecuta las reglas
 
 ## 7. Despliegue con Docker Compose
 
+> **Cambio (21/11/2026, ADR 0007)**: en producción se despliega con **Dokploy**, cuyo Traefik termina HTTPS y enruta el dominio; el servicio `proxy` con Caddy y el `Caddyfile` de esta sección se retiraron. La API sirve `/media/publico/*` y envía HSTS. Lo vigente está en el [runbook](operacion/runbook.md); los esqueletos de abajo quedan como referencia del diseño original.
+
 ### 7.1 Servicios
 
 | Servicio | Imagen | Función | Expuesto |
 |---|---|---|---|
-| `proxy` | `caddy:2` | HTTPS automático, `/api/*` → API, `/media/publico/*` → archivos, resto → frontend, cabeceras de seguridad | 80 y 443 |
+| ~~`proxy`~~ | ~~`caddy:2`~~ | Reemplazado por el Traefik de Dokploy (ADR 0007) | — |
 | `frontend` | Propia (Node) | Astro en modo servidor | No |
 | `migraciones` | Propia (backend) | `migrar`: aplica las migraciones y termina | No |
 | `api` | Propia (backend) | `api`: servidor Axum | No |
 | `worker` | Propia (backend) | `worker`: mensajes, recordatorios y tareas | No |
 | `db` | `postgres:18` | Base de datos con volumen persistente | No |
-| `gotenberg` | `gotenberg/gotenberg:8` | HTML → PDF | No |
-| `respaldo` | Propia (PostgreSQL + cron) | Respaldos diarios con copia externa | No |
+| `gotenberg` | `gotenberg/gotenberg:8.40.0` | HTML → PDF | No |
+| `respaldo` | Propia (PostgreSQL 18 + rclone) | Respaldos cada hora y diarios con copia externa cifrada | No |
 | `mailpit` (solo desarrollo y E2E) | `axllent/mailpit` | Captura de correos | Solo en local |
 
 La API y el worker usan **la misma imagen** con distinto comando: un solo build y el mismo código.
@@ -566,7 +565,7 @@ volumes:
   caddy_datos:
 ```
 
-### 7.3 Esqueleto del `Caddyfile`
+### 7.3 Esqueleto del `Caddyfile` (retirado, ver ADR 0007)
 
 ```caddyfile
 {$DOMINIO} {
@@ -601,9 +600,9 @@ volumes:
 | Desarrollo | `docker compose up` (carga `docker-compose.override.yml`) | Recarga en caliente, Mailpit, WhatsApp simulado y puerto de PostgreSQL abierto solo en `127.0.0.1`. |
 | Pruebas E2E | `docker compose -f docker-compose.yml -f docker-compose.e2e.yml up --wait` | Base de datos en memoria, feature `pruebas-e2e`, reloj controlable y caché corta. |
 | *Staging* | Otro proyecto de Compose en el servidor, con subdominio propio | WhatsApp real con número de pruebas de Meta; datos ficticios. |
-| Producción | `docker compose -f docker-compose.yml up -d` | Solo la imagen etiquetada de la versión; secretos en `.env` con permisos `600`. |
+| Producción | Dokploy despliega `docker-compose.yml` desde la rama (ADR 0007) | Variables en Dokploy; HTTPS y dominios en su Traefik. |
 
-Despliegue: CI construye y etiqueta las imágenes; en el servidor se ejecuta `docker compose pull && docker compose up -d`. Las migraciones corren solas antes de la API, y una versión se revierte volviendo a la etiqueta anterior.
+Despliegue: Dokploy construye las imágenes en el servidor con cada *push* y ejecuta `docker compose up -d`; las migraciones corren solas antes de la API y una versión se revierte desplegando el commit anterior ([runbook](operacion/runbook.md)).
 
 ---
 
@@ -633,7 +632,7 @@ La estimación supone **dos personas** y es preliminar: se recalibra con la velo
 | 0 | **Base de datos** | ✅ Esquema completo dividido en migraciones por módulo (13 archivos + base compartida). `backend/scripts/verificar-esquema.sh` comprueba que son idénticas a `docs/diseno/esquema.sql` y que pasan las 27 pruebas de reglas de negocio. |
 | 0 | **Backend** | ✅ Workspace con `nucleo`, `contratos`, `plataforma` y `app`; 12 módulos con su esqueleto y sus migraciones; módulo de referencia `negocio` completo (dominio, casos de uso, PostgreSQL, HTTP y pruebas); binario `diamante api \| worker \| migrar \| salud`. |
 | 0 | **Infraestructura del backend** | ✅ Dockerfile (sin BuildKit, ADR 0004), Docker Compose base, de desarrollo y de E2E, rol `diamante_app` sin DDL, la integración continua quedó a cargo del equipo (el archivo de CI se retiró el 21/11/2026). |
-| 0 | Frontend, Caddy y Playwright | ⏳ Pendiente. |
+| 0 | Frontend y Playwright | ⏳ Pendiente. (Caddy se descartó: ADR 0007.) |
 | 1 | **Backend** | ✅ `identidad` completo (sesión con cookie, bloqueo por intentos, invitación, recuperación, cambio de contraseña, administradores, límites de intentos y validación de sesión en cada petición); `auditoria` (registro dentro de la transacción de cada módulo y `GET /auditoria`); `negocio` ahora audita sus cambios; correo de `notificaciones` adelantado de la fase 4 (cola *outbox*, SMTP con reintentos, Mailpit); adaptador de `barberos` para saber si un barbero puede entrar. `app`: sesiones reales, verificación de `Origin`, IP del cliente, `diamante crear-administrador` y worker que envía correos. Patrón de contexto transaccional en ADR 0005. 101 pruebas (unitarias, de integración con PostgreSQL y de cableado completo). |
 | 1 | Módulo `archivos` y resto de `negocio` | ✅ `archivos`: almacenamiento en el volumen, tipo detectado por el contenido, fotos públicas en `/media/publico` y documentos privados con URL firmadas (HMAC, 5 minutos). `negocio`: edición de días especiales, precarga idempotente de los festivos de Colombia (Ley Emiliani y Pascua), horario de atención calculado con las franjas de los barberos y versiones de las políticas legales. |
 | 2 | **Backend** | ✅ `catalogo` (servicios y combos, nombre único sin tildes ni mayúsculas, estado, componentes, barberos que lo ofrecen) y `barberos` (registro con cuenta e invitación, edición, estado por fecha, visibilidad y acceso al panel, orden del equipo, retiro, horario, servicios, ausencias con soporte, bloqueos, foto, documentos con expediente y datos privados cifrados con AES-256-GCM, «Mi perfil» en `/yo`). Eventos `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada` y `AccesoRevocado` publicados en el bus para la fase 3. 149 pruebas. |
@@ -646,7 +645,7 @@ La estimación supone **dos personas** y es preliminar: se recalibra con la velo
 | 5 | Pendiente | Pantallas del registro de venta, la caja y el panel del barbero, y sus escenarios en Playwright. Configuración de descuentos y motivos (RF-VEN-14, Could) y de los umbrales de segmentos (RF-CFG-08, entrega 2). |
 | 6 | **Backend** | ✅ `reportes` (solo lectura de las vistas publicadas): dashboard del día con comparación a la misma hora de la semana anterior, tendencia de 12 días, citas por estado, rendimiento y ocupación por barbero (festivos, cierres y bloqueos incluidos) y ausentes; tendencias (por servicio, clientes del mes, año actual contra el anterior, horas pico); alertas (mañana sin confirmar, cumpleaños con 29 de febrero, ausentes, por reactivar, solicitudes del titular y avisos); resumen de ventas y servicios, liquidación por barbero con el porcentaje de cada venta («Mi reporte» para el barbero) y reporte de clientes, por mes o rango; PDF A4 con Gotenberg (encabezado con marca, tipo, periodo y fecha; pie con NIT y «Página X de Y»), auditados. Gotenberg sin JavaScript ni red. E2E-REP-01 a 04 cubiertos por una prueba de cableado completo con cifras exactas y una carpeta de 22 peticiones en la colección. |
 | 6 | Pendiente | Validación de los reportes por el contador (criterio de salida); pantallas del dashboard y los reportes; exportación a Excel (RF-REP-07) y reporte por servicio (RF-SER-07), ambos *Could*. |
-| 7 | **Backend** | ✅ Revisión OWASP ASVS nivel 1 ([docs/operacion/seguridad.md](operacion/seguridad.md)): cabeceras de seguridad, límites de uso por IP y por sesión, trazas con la plantilla de la ruta (sin tokens ni datos personales), vida máxima de las sesiones (30 días), matriz de autorización de todas las rutas, `cargo audit` sin vulnerabilidades. Concurrencia: dos pruebas con peticiones simultáneas reales (reservas, «Cualquier barbero», tiquetes, cobros, anulaciones y cierres dobles, métricas del cliente, transiciones de una cita, workers, bloqueo de cuentas); corrigió un `500` por bloqueo mutuo en las reservas. Respaldos cada hora y diarios con archivos, manifiesto de filas, copia externa cifrada (rclone) y restauración probada de punta a punta ([runbook](operacion/runbook.md)). Caddy para producción (HTTPS, HSTS, fotos desde el volumen) verificado en local. Rendimiento con dos años de datos: todas las metas RNF-REN con márgenes de 10 a 100 veces ([informe](operacion/rendimiento.md)). Recorrido de la colección automatizado (`make coleccion`): 355 peticiones y 683 pruebas sin fallas. 227 pruebas en Rust. |
+| 7 | **Backend** | ✅ Revisión OWASP ASVS nivel 1 ([docs/operacion/seguridad.md](operacion/seguridad.md)): cabeceras de seguridad, límites de uso por IP y por sesión, trazas con la plantilla de la ruta (sin tokens ni datos personales), vida máxima de las sesiones (30 días), matriz de autorización de todas las rutas, `cargo audit` sin vulnerabilidades. Concurrencia: dos pruebas con peticiones simultáneas reales (reservas, «Cualquier barbero», tiquetes, cobros, anulaciones y cierres dobles, métricas del cliente, transiciones de una cita, workers, bloqueo de cuentas); corrigió un `500` por bloqueo mutuo en las reservas. Respaldos cada hora y diarios con archivos, manifiesto de filas, copia externa cifrada (rclone) y restauración probada de punta a punta ([runbook](operacion/runbook.md)). Despliegue con Dokploy y su Traefik (ADR 0007), verificado con un Traefik simulado: HTTPS, HSTS, enrutamiento de `/api` y `/media`, IP real del cliente, PDF y log de acceso sin rutas; la simulación corrigió dos fallas de producción (las migraciones exigían las claves de la API y el primer respaldo se hacía antes de migrar). Rendimiento con dos años de datos: todas las metas RNF-REN con márgenes de 10 a 100 veces ([informe](operacion/rendimiento.md)). Recorrido de la colección automatizado (`make coleccion`): 355 peticiones y 683 pruebas sin fallas. 228 pruebas en Rust. |
 | 7 | Pendiente | Accesibilidad y suite E2E de Playwright (dependen del frontend), contenido real y textos legales, despliegue en el VPS, capacitación, revisión de contraseñas filtradas (V2.1.7) e integración continua (a cargo del equipo). |
 | 1 | Frontend (acceso, cascarón del panel, configuración básica) y E2E-AUT-01 a 05 | ⏳ Pendiente (depende del frontend de la fase 0). |
 

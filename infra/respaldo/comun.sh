@@ -24,3 +24,14 @@ esperar_base() {
   registrar "ERROR: la base de datos no responde" >&2
   return 1
 }
+
+# Configuración de rclone. Con DIAMANTE_RESPALDO_RCLONE_CONF_B64 (el contenido de rclone.conf
+# en base64, para paneles como Dokploy que solo manejan variables) se escribe en un archivo
+# privado del contenedor; si no, se usa el montado en /config/rclone/rclone.conf.
+preparar_rclone() {
+  if [ -n "${DIAMANTE_RESPALDO_RCLONE_CONF_B64:-}" ]; then
+    local archivo=/tmp/rclone.conf
+    (umask 077 && printf '%s' "$DIAMANTE_RESPALDO_RCLONE_CONF_B64" | base64 -d > "$archivo")
+    export RCLONE_CONFIG="$archivo"
+  fi
+}

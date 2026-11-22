@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 
-/// Si es `true`, la API está detrás de un proxy de confianza (Caddy) y la IP del cliente es
+/// Si es `true`, la API está detrás de un proxy de confianza (Traefik) y la IP del cliente es
 /// el último valor de `X-Forwarded-For`, el que agregó ese proxy. Se agrega como extensión.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConfianzaProxy(pub bool);

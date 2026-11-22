@@ -11,8 +11,8 @@ está implementado y qué prueba automática lo respalda.
      mutuo de PostgreSQL en la restricción de exclusión de las citas. Ahora se reintenta (V11).
   2. Las sesiones no tenían vida máxima: con «Recordarme» y uso diario no vencían nunca. Ahora
      vencen a los 30 días de iniciarse (V3.3.2).
-  3. Faltaban las cabeceras de seguridad en la API, los límites de uso generales y una traza de
-     peticiones sin datos personales (V14.4, V11.1.4, V7.1).
+  3. Faltaban las cabeceras de seguridad en la API (HSTS incluido, al retirar Caddy), los límites
+     de uso generales y una traza de peticiones sin datos personales (V14.4, V11.1.4, V7.1).
 - **Pendiente** (sección final): revisar contraseñas contra listas de contraseñas filtradas
   (V2.1.7), el reenvío de la IP del cliente desde el servidor del frontend y la política de
   contenido (CSP) de las páginas, que es del frontend.
@@ -26,7 +26,7 @@ está implementado y qué prueba automática lo respalda.
 |---|---|
 | Separación de módulos y mínimo acoplamiento | Monolito modular (ADR 0001): cada módulo con su esquema; `reportes` solo lee vistas publicadas |
 | Mínimo privilegio en la base | `diamante_app` solo DML (sin DDL); `diamante_respaldo` solo lectura; las migraciones con `diamante_propietario`. La base no publica puertos |
-| Servicios internos aislados | Solo Caddy publica puertos (80/443). Gotenberg sin JavaScript ni red: se comprobó que bloquea `http://example.com` y `http://169.254.169.254` (SSRF) |
+| Servicios internos aislados | Ningún servicio publica puertos: el Traefik de Dokploy (80/443) llega a la API por su red. Gotenberg sin JavaScript ni red: se comprobó que bloquea `http://example.com` y `http://169.254.169.254` (SSRF) |
 
 ## V2 · Autenticación
 
@@ -67,14 +67,14 @@ está implementado y qué prueba automática lo respalda.
 | Entradas tipadas y estrictas | `serde` con `deny_unknown_fields`; parámetros de consulta desconocidos → `400`; validación de dominio con errores por campo (`422`) |
 | SQL sin inyección | Consultas parametrizadas (`sqlx`); el SQL dinámico solo concatena constantes del propio archivo (`AssertSqlSafe`) |
 | Salida | La API responde JSON. El HTML de los PDF escapa todo dato (`pdf::escapar`, probado con `<script>`) y Gotenberg no ejecuta JavaScript |
-| Archivos | Tipo detectado por el contenido, no por el nombre; límites de tamaño (foto 6 MB, documento 11 MB, Caddy 12 MB); claves de archivo validadas (sin `..`) |
+| Archivos | Tipo detectado por el contenido, no por el nombre; límites de tamaño por ruta (foto 6 MB, documento 11 MB); claves de archivo validadas (sin `..`) |
 
 ## V7 · Errores y logs
 
 | Control | Implementación | Prueba |
 |---|---|---|
 | Errores sin detalles internos | *Problem Details* (RFC 9457); los `500` dicen «Ocurrió un error inesperado» y la causa va solo al log | unitarias de `plataforma` |
-| Logs sin datos personales ni secretos | Cada petición registra la **plantilla** de la ruta (`/publico/citas/gestion/{token}`), nunca la URL: ni tokens de gestión, ni búsquedas (`?q=`), ni firmas (`?firma=`). Caddy sin logs de acceso | `la_traza_lleva_la_plantilla_de_la_ruta_y_no_la_url`; en el recorrido E2E, 0 tokens o celulares en los logs |
+| Logs sin datos personales ni secretos | Cada petición registra la **plantilla** de la ruta (`/publico/citas/gestion/{token}`), nunca la URL: ni tokens de gestión, ni búsquedas (`?q=`), ni firmas (`?firma=`). El log de acceso de Traefik es del servidor: el runbook explica cómo omitir la ruta (verificado: sin tokens ni celulares) | `la_traza_lleva_la_plantilla_de_la_ruta_y_no_la_url`; en el recorrido E2E, 0 tokens o celulares en los logs |
 | Secretos que no aparecen en `Debug` | `Secreto`, `ClaveCifrado` | unitarias de configuración |
 | Auditoría inalterable | `auditoria.registro` solo admite inserciones (trigger); cubre exportaciones de reportes y acciones sensibles | pruebas de esquema y E2E |
 
@@ -93,13 +93,15 @@ no existe.
 
 ## V9 · Comunicaciones
 
-HTTPS obligatorio con Caddy (redirección 308, HTTP/2 y HTTP/3, HSTS de un año con
-subdominios). El tráfico entre contenedores va por la red interna de Docker.
+HTTPS obligatorio en el Traefik de Dokploy (Let's Encrypt, redirección desde HTTP, TLS 1.2 o
+superior con suites modernas). La API envía HSTS de un año cuando la URL pública es `https`. El
+tráfico entre contenedores va por las redes internas de Docker. Verificado con un Traefik 3.6
+simulado (ADR 0007).
 
 ## V10 · Código malicioso y dependencias
 
 `Cargo.lock` versionado y compilación con `--locked`; `cargo audit` sin vulnerabilidades.
-Imágenes fijadas por versión (`gotenberg/gotenberg:8.40.0`, `caddy:2.11.9`,
+Imágenes fijadas por versión (`gotenberg/gotenberg:8.40.0`,
 `axllent/mailpit:v1.27.0`, `rust:1.97.1`); `postgres:18` sigue la versión menor (parches de
 seguridad) dentro de la mayor.
 
@@ -107,27 +109,27 @@ seguridad) dentro de la mayor.
 
 | Control | Implementación | Prueba |
 |---|---|---|
-| Límites de uso | 120/min por IP en lo público, 600/min por sesión y 1.200/min por IP en el panel, 120/min sin sesión; `429` con `Retry-After`. Inventar cookies o falsificar `X-Forwarded-For` no los evita | unitarias; en Docker, 120 peticiones pasan y el resto recibe `429` (también con `X-Forwarded-For` falsos detrás de Caddy) |
+| Límites de uso | 120/min por IP en lo público, 600/min por sesión y 1.200/min por IP en el panel, 120/min sin sesión; `429` con `Retry-After`. Inventar cookies o falsificar `X-Forwarded-For` no los evita | unitarias; en Docker, 120 peticiones pasan y el resto recibe `429` (también con `X-Forwarded-For` falsos detrás de Traefik) |
 | Sin dobles reservas ni cobros dobles | Restricción de exclusión en `agenda.cita`, `UNIQUE (cita_id)` en ventas, contador de tiquetes bloqueado | `reservas_y_ventas_simultaneas` |
 | Carreras | Reserva en línea por la misma hora, celulares repetidos, métricas del cliente con ventas simultáneas, anulaciones y cierres dobles, transiciones cruzadas de una cita, varios workers a la vez | `carreras_de_clientes_ventas_agenda_y_worker` (repetidas 15 veces sin fallar) |
 
 ## V12 · Archivos
 
 Documentos privados solo con URL firmada (HMAC-SHA256, 5 minutos), siempre como adjunto y con
-`nosniff`. Caddy solo sirve `/media/publico/*` desde el volumen (se comprobó que
-`/media/privado/…` y `/media/publico/../privado/…` responden `404`).
+`nosniff`. `/media/{*ruta}` solo lee claves de `publico/` validadas (sin `..`); lo privado
+responde `404`.
 
 ## V13 · API y webhooks
 
 Webhook de WhatsApp con firma `X-Hub-Signature-256` sobre el cuerpo exacto y comparación en
 tiempo constante; el token de verificación de Meta también en tiempo constante. Sin CORS: el
-sitio y la API comparten origen detrás de Caddy.
+sitio y la API comparten origen detrás de Traefik.
 
 ## V14 · Configuración
 
 | Control | Implementación |
 |---|---|
-| Cabeceras | API: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `CSP: default-src 'none'; frame-ancestors 'none'`, `X-Robots-Tag: noindex`. Caddy: HSTS, `Permissions-Policy`, sin `Server` ni `Via` |
+| Cabeceras | API: `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `CSP: default-src 'none'; frame-ancestors 'none'`, `X-Robots-Tag: noindex` y HSTS en HTTPS. TLS y certificados en Traefik |
 | Producción no arranca mal configurada | Exige URL pública, claves de firma y cifrado; rechaza `DIAMANTE_PRUEBAS_E2E=true` y `DIAMANTE_LIMITES_DE_USO=false` |
 | Tiempo máximo por petición | 30 s (120 s los reportes por los PDF) |
 
@@ -140,6 +142,8 @@ sitio y la API comparten origen detrás de Caddy.
    el servidor, debe reenviar la IP del navegador; si no, los límites por IP contarían a todos
    los visitantes como uno solo. Se resuelve en la fase del frontend.
 3. **CSP de las páginas**: la API ya la envía; las páginas del sitio la definirán en el frontend.
-4. **Segundo factor para administradores**: previsto como requisito *Could* (fase 9).
-5. **`chrono` sin mantenimiento**: vigilar el aviso de RustSec y evaluar la migración a `jiff`
+4. **Log de acceso y panel de Traefik**: son del servidor (Dokploy); ver la sección 7 del
+   runbook (omitir la ruta del log, no publicar el panel en el puerto 8080).
+5. **Segundo factor para administradores**: previsto como requisito *Could* (fase 9).
+6. **`chrono` sin mantenimiento**: vigilar el aviso de RustSec y evaluar la migración a `jiff`
    si aparece una vulnerabilidad.

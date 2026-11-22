@@ -14,8 +14,8 @@ corta duración. El despliegue es un solo VPS con Docker Compose.
 - **Contenido en un volumen de Docker** (`archivos`, montado en `/datos/archivos`), con dos
   carpetas: `publico/` y `privado/`. **Metadatos en PostgreSQL** (`archivos.archivo`), con el
   SHA-256 del contenido.
-- **Fotos públicas**: Caddy sirve `/media/publico/*` directamente desde el volumen (en
-  desarrollo lo hace la API). Las claves son aleatorias (128 bits) e inmutables: caché de un año.
+- **Fotos públicas**: la API sirve `/media/publico/*` desde el volumen (en un principio lo iba a
+  hacer Caddy; ver ADR 0007). Las claves son aleatorias (128 bits) e inmutables: caché de un año.
 - **Documentos privados**: solo con `GET /api/v1/archivos/{id}?exp=…&firma=…`, donde la firma es
   HMAC-SHA256 de `archivo:{id}:{vence}` con `DIAMANTE_CLAVE_FIRMA`. Las rutas del panel que listan
   documentos devuelven URL que vencen en 5 minutos.

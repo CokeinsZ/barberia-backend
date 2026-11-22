@@ -80,7 +80,7 @@ pub struct Configuracion {
     pub url_publica: String,
     /// Orígenes aceptados en peticiones que modifican datos (verificación de `Origin`).
     pub origenes_permitidos: Vec<String>,
-    /// Si la API está detrás de un proxy de confianza (Caddy), la IP del cliente se toma de
+    /// Si la API está detrás de un proxy de confianza (Traefik), la IP del cliente se toma de
     /// `X-Forwarded-For`.
     pub confiar_proxy: bool,
     /// Envío de correos. Sin configuración, los correos quedan en cola sin enviarse.
@@ -146,6 +146,39 @@ impl Configuracion {
     /// Lee la configuración de las variables de entorno del proceso.
     pub fn desde_entorno() -> Result<Self, ErrorConfiguracion> {
         Self::desde(|clave| std::env::var(clave).ok().filter(|v| !v.trim().is_empty()))
+    }
+
+    /// Solo lo que necesita `diamante migrar`: la conexión del rol dueño del esquema
+    /// (`MIGRACIONES_DATABASE_URL` o `DATABASE_URL`) y el formato de los logs. Las migraciones no
+    /// usan la URL pública ni las claves, así que su contenedor no las recibe (ni las exige,
+    /// aunque sea producción).
+    pub fn para_migraciones(
+        leer: impl Fn(&str) -> Option<String>,
+    ) -> Result<(Secreto, FormatoLogs), ErrorConfiguracion> {
+        let url = leer("MIGRACIONES_DATABASE_URL").or_else(|| leer("DATABASE_URL"));
+        let produccion = leer("DIAMANTE_ENTORNO").as_deref() == Some("produccion");
+        let formato = match leer("DIAMANTE_LOGS").as_deref() {
+            Some("json") => Some(FormatoLogs::Json),
+            Some("texto") => Some(FormatoLogs::Texto),
+            None if produccion => Some(FormatoLogs::Json),
+            None => Some(FormatoLogs::Texto),
+            Some(_) => None,
+        };
+        match (url, formato) {
+            (Some(url), Some(formato)) => Ok((Secreto::nuevo(url), formato)),
+            (url, formato) => Err(ErrorConfiguracion {
+                faltantes: if url.is_none() {
+                    vec!["DATABASE_URL"]
+                } else {
+                    Vec::new()
+                },
+                invalidas: if formato.is_none() {
+                    vec!["DIAMANTE_LOGS (use texto o json)".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            }),
+        }
     }
 
     /// Lee la configuración de cualquier fuente (permite probarla sin tocar el entorno).
@@ -545,6 +578,28 @@ mod pruebas {
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn las_migraciones_solo_necesitan_la_base_aunque_sea_produccion() {
+        let (url, formato) = Configuracion::para_migraciones(fuente(&[
+            ("DATABASE_URL", "postgres://dueno@db/diamante"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (url.exponer(), formato),
+            ("postgres://dueno@db/diamante", FormatoLogs::Json)
+        );
+        let (url, _) = Configuracion::para_migraciones(fuente(&[
+            ("DATABASE_URL", "postgres://app@db/diamante"),
+            ("MIGRACIONES_DATABASE_URL", "postgres://dueno@db/diamante"),
+        ]))
+        .unwrap();
+        assert_eq!(url.exponer(), "postgres://dueno@db/diamante");
+        let error =
+            Configuracion::para_migraciones(fuente(&[("DIAMANTE_ENTORNO", "produccion")])).unwrap_err();
+        assert_eq!(error.faltantes, vec!["DATABASE_URL"]);
     }
 
     #[test]

@@ -48,6 +48,19 @@ pub async fn cabeceras_de_seguridad(peticion: Request, siguiente: Next) -> Respo
     respuesta
 }
 
+/// `Strict-Transport-Security` de un año (ASVS V9.1.1, V14.4.5). Se aplica cuando el sitio se
+/// sirve por HTTPS (`DIAMANTE_URL_PUBLICA` con `https://`): el navegador solo la toma de
+/// respuestas HTTPS, así que detrás del proxy que termina TLS (Traefik) es segura. Sin
+/// `includeSubDomains`: la API no sabe qué otros sitios cuelgan del mismo dominio.
+pub async fn hsts(peticion: Request, siguiente: Next) -> Response {
+    let mut respuesta = siguiente.run(peticion).await;
+    respuesta.headers_mut().insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000"),
+    );
+    respuesta
+}
+
 /// Límites de uso por minuto (RNF-SEG, `docs/diseno/api.md` 1.4). Se suman a los propios de
 /// inicio de sesión, recuperación y códigos de verificación, que son más estrictos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +118,7 @@ impl Default for LimitesDeUso {
 }
 
 /// Rutas sin límite: salud (Docker), webhooks (Meta reintenta y los firma), fotos públicas
-/// (en producción las sirve Caddy) y las de apoyo del ambiente de pruebas.
+/// (cacheadas por el navegador) y las de apoyo del ambiente de pruebas.
 fn sin_limite(ruta: &str) -> bool {
     ruta.starts_with("/api/salud")
         || ruta.starts_with("/api/v1/webhooks/")

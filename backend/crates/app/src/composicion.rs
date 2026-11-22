@@ -41,6 +41,8 @@ pub(crate) struct Composicion {
     pub(crate) confianza_proxy: ConfianzaProxy,
     /// Límites de uso por IP y por sesión (sin ellos solo en pruebas de carga).
     pub(crate) limites: Option<LimitesDeUso>,
+    /// El sitio se sirve por HTTPS: las respuestas llevan `Strict-Transport-Security`.
+    pub(crate) https: bool,
     pub(crate) identidad: ModuloIdentidad,
     pub(crate) negocio: ModuloNegocio,
     pub(crate) auditoria: ModuloAuditoria,
@@ -245,6 +247,7 @@ impl Composicion {
             origenes: OrigenesPermitidos(Arc::new(configuracion.origenes_permitidos.clone())),
             confianza_proxy: ConfianzaProxy(configuracion.confiar_proxy),
             limites: configuracion.limites_de_uso.then(LimitesDeUso::default),
+            https: configuracion.url_publica.starts_with("https://"),
             identidad,
             negocio,
             auditoria,

@@ -1,6 +1,8 @@
 # Docker Compose base (producción): base de datos, backend (API, worker y migraciones),
-# Gotenberg (PDF de los reportes) y respaldos. El proxy (Caddy) está en docker-compose.prod.yml
-# y el frontend se agrega en su fase.
+# Gotenberg (PDF de los reportes) y respaldos. El frontend se agrega en su fase.
+#
+# En producción lo despliega Dokploy con este archivo solo: su Traefik termina HTTPS y enruta
+# el dominio a los servicios (ver docs/operacion/runbook.md). Ningún servicio publica puertos.
 #
 # Desarrollo:  docker compose up            (carga también docker-compose.override.yml)
 # Producción:  docker compose -f docker-compose.yml up -d
@@ -70,7 +72,7 @@ services:
     command: ["api"]
     environment:
       <<: *entorno-app
-    # Fotos y documentos (en producción Caddy sirve /media/publico desde este mismo volumen).
+    # Fotos y documentos (/media/publico/* y descargas privadas firmadas).
     volumes:
       - archivos:/datos/archivos
     depends_on:
@@ -130,6 +132,8 @@ services:
       PGUSER: diamante_respaldo
       PGPASSWORD: ${DIAMANTE_RESPALDO_PASSWORD:-}
       DIAMANTE_RESPALDO_REMOTO: ${DIAMANTE_RESPALDO_REMOTO:-}
+      # rclone.conf en base64 (alternativa al archivo de infra/respaldo/rclone, p. ej. en Dokploy).
+      DIAMANTE_RESPALDO_RCLONE_CONF_B64: ${DIAMANTE_RESPALDO_RCLONE_CONF_B64:-}
       DIAMANTE_RESPALDO_CADA_MINUTOS: ${DIAMANTE_RESPALDO_CADA_MINUTOS:-60}
       DIAMANTE_RESPALDO_HORA_DIARIA: ${DIAMANTE_RESPALDO_HORA_DIARIA:-2}
       DIAMANTE_RESPALDO_RETENCION_DIAS: ${DIAMANTE_RESPALDO_RETENCION_DIAS:-30}
@@ -137,8 +141,9 @@ services:
       - respaldos:/respaldos
       - archivos:/datos/archivos:ro
       - ./infra/respaldo/rclone:/config/rclone:ro
+    # Después de las migraciones: el primer respaldo de un despliegue nuevo ya tiene el esquema.
     depends_on:
-      db: { condition: service_healthy }
+      migraciones: { condition: service_completed_successfully }
     restart: unless-stopped
 
 volumes:

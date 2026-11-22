@@ -1,5 +1,5 @@
 //! `GET /api/v1/archivos/{id}?exp=&firma=` (descarga privada con URL firmada) y
-//! `GET /media/{*ruta}` (fotos públicas; en producción las sirve Caddy desde el volumen).
+//! `GET /media/{*ruta}` (fotos públicas, con caché de un año).
 
 use std::sync::Arc;
 

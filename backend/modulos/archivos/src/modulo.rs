@@ -51,7 +51,7 @@ impl ModuloArchivos {
         http::rutas_api(self.servicio.clone())
     }
 
-    /// `GET /media/{*ruta}` (en la raíz). En producción Caddy atiende esta ruta antes.
+    /// `GET /media/{*ruta}` (en la raíz). En producción el proxy (Traefik) la enruta a la API.
     pub fn rutas_media(&self) -> Router {
         http::rutas_media(self.servicio.clone())
     }

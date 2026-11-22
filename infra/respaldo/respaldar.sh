@@ -65,6 +65,7 @@ find "$raiz/diario" -type f -mtime +"$dias" -delete
 
 # Copia fuera del servidor.
 if [ -n "${DIAMANTE_RESPALDO_REMOTO:-}" ]; then
+  preparar_rclone
   remoto="${DIAMANTE_RESPALDO_REMOTO%/}"
   rclone copy "$destino" "$remoto/$tipo" --exclude '.hecho-*' --exclude '*.parcial'
   if [ "$tipo" = diario ]; then

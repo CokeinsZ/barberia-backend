@@ -12,7 +12,7 @@ mod sesion;
 
 pub use cookies::{TokenSesion, cookie_sesion, cookie_sesion_vencida};
 pub use endurecimiento::{
-    ConfiguracionLimites, LimitesDeUso, anotar_ruta, cabeceras_de_seguridad, limitar_uso,
+    ConfiguracionLimites, LimitesDeUso, anotar_ruta, cabeceras_de_seguridad, hsts, limitar_uso,
 };
 pub use entrada::{Entrada, Parametros};
 pub use formulario::{ArchivoSubido, Formulario};

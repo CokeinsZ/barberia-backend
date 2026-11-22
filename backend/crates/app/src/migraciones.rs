@@ -4,7 +4,7 @@
 use plataforma::base_datos::{
     MIGRACIONES_BASE, OrigenMigraciones, aplicar_migraciones, combinar_migraciones, conectar,
 };
-use plataforma::configuracion::Configuracion;
+use plataforma::configuracion::Secreto;
 
 use crate::ErrorDeArranque;
 
@@ -66,9 +66,9 @@ pub(crate) fn origenes() -> Vec<OrigenMigraciones> {
     ]
 }
 
-pub(crate) async fn ejecutar(configuracion: &Configuracion) -> Result<(), ErrorDeArranque> {
+pub(crate) async fn ejecutar(url: &Secreto) -> Result<(), ErrorDeArranque> {
     let migrador = combinar_migraciones(&origenes())?;
-    let pool = conectar(&configuracion.base_datos.url_migraciones, 1).await?;
+    let pool = conectar(url, 1).await?;
     aplicar_migraciones(&pool, &migrador).await?;
     pool.close().await;
     tracing::info!(total = migrador.iter().count(), "migraciones al día");

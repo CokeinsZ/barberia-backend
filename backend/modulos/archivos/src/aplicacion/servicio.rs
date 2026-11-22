@@ -102,7 +102,7 @@ impl<C: Send> ServicioArchivos<C> {
         })
     }
 
-    /// Lectura de un archivo público por su ruta (en producción lo sirve Caddy).
+    /// Lectura de un archivo público por su ruta (`/media/publico/…`).
     pub(crate) async fn leer_publico(
         &self,
         ruta: &str,

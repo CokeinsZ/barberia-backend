@@ -5,8 +5,8 @@
 //!
 //! - Los módulos dueños (p. ej. `barberos`) guardan con [`api::Archivos::guardar`] dentro de su
 //!   transacción: aquí se valida el tipo **por su contenido** (no por la extensión) y el tamaño.
-//! - **Públicos** (fotos de barberos): `/media/publico/…`, que en producción sirve Caddy
-//!   directamente desde el volumen.
+//! - **Públicos** (fotos de barberos): `/media/publico/…`, que sirve la API con caché de un
+//!   año (las claves son aleatorias y nunca se reutilizan).
 //! - **Privados** (documentos, soportes): solo con una URL firmada (HMAC-SHA256) de corta
 //!   duración, `GET /api/v1/archivos/{id}?exp=…&firma=…`.
 

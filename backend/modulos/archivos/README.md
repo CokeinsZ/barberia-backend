@@ -7,7 +7,7 @@ en `archivos.archivo` (RNF-SEG-09).
 |---|---|
 | Fase del plan | 1 ✅ |
 | Fachada | `api::Archivos<C>`: `guardar`, `eliminar` + `borrar_contenido`, `metadatos`, `urls_publicas`, `url_firmada` |
-| Endpoints | `GET /api/v1/archivos/{id}?exp=&firma=` (descarga privada firmada) y `GET /media/publico/…` (fotos; en producción las sirve Caddy) |
+| Endpoints | `GET /api/v1/archivos/{id}?exp=&firma=` (descarga privada firmada) y `GET /media/publico/…` (fotos, con caché de un año) |
 | Configuración | `DIAMANTE_ARCHIVOS_DIR`, `DIAMANTE_CLAVE_FIRMA` (obligatoria en producción) |
 
 ## Reglas

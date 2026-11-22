@@ -10,7 +10,7 @@ La API la consumen el frontend (Astro + React) y Meta (webhooks de WhatsApp). La
 
 | Tema | Convención |
 |---|---|
-| Base | `https://<dominio>/api/v1`. Caddy enruta `/api/*` al backend; el sitio y la API comparten dominio. |
+| Base | `https://<dominio>/api/v1`. El proxy (Traefik de Dokploy) enruta `/api/*` y `/media/*` al backend; el sitio y la API comparten dominio. |
 | Formato | JSON en `snake_case` y UTF-8. Archivos con `multipart/form-data`. PDF, Excel e ICS como descargas. |
 | Dinero | Enteros en pesos (`35000`). Nunca decimales. |
 | Fechas y horas | ISO 8601: fechas `2026-11-19`; instantes con zona `2026-11-19T15:30:00-05:00`. El servidor interpreta las fechas sin hora en America/Bogota. |
@@ -80,11 +80,11 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | Panel | 600 por minuto por sesión (y 1.200 por minuto por IP, para que inventar cookies no sirva) |
 | Otras rutas sin sesión | 120 por minuto |
 
-Al superarlos: `429 demasiados_intentos` con `Retry-After`. No se limitan la salud, los webhooks firmados ni las fotos públicas. Detrás de Caddy la IP es la que él agrega a `X-Forwarded-For`; un valor falso del cliente no la cambia. Solo las pruebas de carga los apagan (`DIAMANTE_LIMITES_DE_USO=false`, rechazado en producción).
+Al superarlos: `429 demasiados_intentos` con `Retry-After`. No se limitan la salud, los webhooks firmados ni las fotos públicas. Detrás del proxy (Traefik), la IP es la que él agrega a `X-Forwarded-For`; un valor falso del cliente no la cambia. Solo las pruebas de carga los apagan (`DIAMANTE_LIMITES_DE_USO=false`, rechazado en producción).
 
 ### 1.5 Cabeceras y tiempos
 
-Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `X-Robots-Tag: noindex`, `x-request-id` y `Cache-Control: no-store` (salvo la landing pública, 60 s). Tiempo máximo por petición: 30 s; los reportes, 120 s (`408` al superarlo).
+Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `X-Robots-Tag: noindex`, `x-request-id`, `Cache-Control: no-store` (salvo la landing pública, 60 s) y, si `DIAMANTE_URL_PUBLICA` es `https`, `Strict-Transport-Security: max-age=31536000`. Tiempo máximo por petición: 30 s; los reportes, 120 s (`408` al superarlo).
 
 ---
 
@@ -268,7 +268,7 @@ Periodo (RF-REP-01, RN-22): `?mes=AAAA-MM` o `?desde=&hasta=`; sin nada, el mes 
 |---|---|---|
 | GET | `/salud` | Proceso vivo (para Docker). |
 | GET | `/salud/lista` | Listo para atender: responde la base de datos. |
-| GET | `/media/publico/{clave}` | Fotos públicas. En producción las sirve Caddy directamente desde el volumen; en desarrollo, la API. |
+| GET | `/media/publico/{clave}` | Fotos públicas, servidas por la API desde el volumen con caché de un año (claves aleatorias e inmutables). |
 | GET | `/api/v1/archivos/{id}?exp=&firma=` | Descarga de un archivo privado con URL firmada (HMAC-SHA256) que vence en 5 minutos; siempre como adjunto. |
 
 ### 2.13 Solo en el ambiente de pruebas E2E

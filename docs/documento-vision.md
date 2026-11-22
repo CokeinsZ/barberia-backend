@@ -320,7 +320,7 @@ flowchart LR
         B["Barbero<br/>celular"]
     end
     subgraph Servidor [Servidor con Docker Compose]
-        P["Proxy inverso<br/>Caddy + HTTPS"]
+        P["Proxy inverso<br/>Traefik (Dokploy) + HTTPS"]
         W["Frontend<br/>Astro + React"]
         API["API REST<br/>Rust + Axum"]
         J["Worker<br/>tareas y recordatorios"]
@@ -351,7 +351,7 @@ flowchart LR
 
 | Componente | Tecnología | Responsabilidad |
 |---|---|---|
-| Proxy inverso | Caddy | HTTPS automático; enruta `/api/*` a la API y el resto al frontend, bajo el mismo dominio. |
+| Proxy inverso | Traefik (de Dokploy) | HTTPS automático; enruta `/api/*` y `/media/*` a la API y el resto al frontend, bajo el mismo dominio. Dokploy despliega desde el repositorio (ADR 0007). |
 | Sitio público | Astro con renderizado en servidor (Node) | Landing renderizada en el servidor con caché corta (RF-PUB-04); páginas legales prerenderizadas. |
 | Agendamiento y gestión de cita | Astro + isla de React | Consulta la disponibilidad en vivo, verifica el código, crea, cancela y reprograma citas. |
 | Paneles (administrador y barbero) | Astro + React (aplicación de una sola página montada en una ruta comodín) | Aplicación interactiva autenticada y no indexable. |
@@ -368,7 +368,7 @@ flowchart LR
 2. **Cambia por acciones del administrador** (servicios, precios, barberos, horarios, datos del negocio): la landing se renderiza en el servidor y se guarda en caché unos minutos (RF-PUB-04). Así refleja los cambios sin regenerar el sitio, algo que con Docker Compose exigiría un proceso de compilación aparte.
 3. **Cambia con el tiempo o en tiempo real** (disponibilidad, «de vacaciones hasta…», agenda, ventas): se consulta en vivo a la API desde islas de React.
 
-El sitio y la API se sirven bajo el mismo dominio (`/api` detrás de Caddy), lo que simplifica las cookies de sesión y evita configurar CORS.
+El sitio y la API se sirven bajo el mismo dominio (`/api` detrás de Traefik), lo que simplifica las cookies de sesión y evita configurar CORS.
 
 **Interfaces externas**
 
@@ -675,18 +675,18 @@ Reglas que el mockup implementa o anuncia, con sus valores por defecto.
 |---|---|---|
 | DEP-01 | **WhatsApp Cloud API**, la API oficial de Meta, sin intermediarios (DA-14): cuenta de Meta Business verificada, número dedicado (o uso compartido con la app WhatsApp Business, si Meta lo permite para ese número), nombre visible «Diamante Barbería» aprobado, plantillas aprobadas (de autenticación para el código; de utilidad para confirmación, recordatorio, cancelación y reprogramación) y webhooks configurados. | No hay códigos, confirmaciones ni recordatorios: bloquea el MVP. Hay que iniciar el trámite al comienzo del proyecto. |
 | DEP-02 | Proveedor de correo transaccional con acceso SMTP y dominio propio autenticado (SPF, DKIM y DMARC). | El personal no puede activar su cuenta ni recuperar la contraseña. |
-| DEP-03 | Un servidor (VPS) con Docker y Docker Compose, con espacio para el volumen de PostgreSQL 18, los archivos y los respaldos; un destino externo para copiar los respaldos; y un dominio que apunte al servidor (Caddy obtiene los certificados TLS automáticamente). | No hay dónde desplegar. |
+| DEP-03 | Un servidor (VPS) con Docker y Docker Compose, con espacio para el volumen de PostgreSQL 18, los archivos y los respaldos; un destino externo para copiar los respaldos; y un dominio que apunte al servidor (el Traefik de Dokploy obtiene los certificados TLS automáticamente). | No hay dónde desplegar. |
 | DEP-04 | Google Maps (mapa embebido y enlaces) y Google Calendar (enlace para agregar la cita). No requieren integración por API. | Se pierde el mapa o el botón de calendario; no es crítico. |
 | DEP-05 | Calendario oficial de festivos de Colombia (Ley 51 de 1983), calculado o cargado cada año. | Se ofrecerían horas normales en festivos. |
 | DEP-06 | Librerías de código abierto: Astro y React (DA-15); en Rust, Axum, Tokio, SQLx, Argon2 y librerías de plantillas y de Excel. El detalle está en el plan de desarrollo. | — |
 | DEP-07 | Tipografías Cormorant Garamond y Manrope (Google Fonts, licencia SIL Open Font License). | — |
 | DEP-08 | Textos legales (política de tratamiento de datos, política de cancelación y términos) revisados por la barbería o su asesor legal. | No se puede salir a producción (RF-PUB-09). |
 | DEP-09 | Asesoría contable para validar las liquidaciones y los reportes. | Riesgo de reportes que no sirvan a la contabilidad. |
-| DEP-10 | Imágenes de contenedor de código abierto: PostgreSQL 18, Caddy, Gotenberg (PDF) y Node para el frontend. | No se puede desplegar con Docker Compose. |
+| DEP-10 | Imágenes de contenedor de código abierto: PostgreSQL 18, Gotenberg (PDF) y Node para el frontend; Dokploy con Traefik para el despliegue. | No se puede desplegar con Docker Compose. |
 
 #### Licencias y costos recurrentes
 
-- **Software**: todo el stack es de código abierto (Astro, React, Axum, Tokio y Gotenberg con licencia MIT; Rust con MIT/Apache 2.0; Caddy con Apache 2.0; PostgreSQL con la licencia PostgreSQL). No hay licencias por usuario.
+- **Software**: todo el stack es de código abierto (Astro, React, Axum, Tokio y Gotenberg con licencia MIT; Rust con MIT/Apache 2.0; Dokploy con Apache 2.0, Traefik con MIT; PostgreSQL con la licencia PostgreSQL). No hay licencias por usuario.
 - **Costos recurrentes**: el servidor (VPS) y el almacenamiento externo de los respaldos, dominio, mensajes de WhatsApp (cobro por mensaje de plantilla según las tarifas de Meta para Colombia), correo transaccional (suele estar cubierto por planes gratuitos o de bajo costo para este volumen) y monitoreo.
 
 ---

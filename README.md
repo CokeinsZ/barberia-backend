@@ -9,7 +9,7 @@ agendamiento en línea, panel del administrador y panel del barbero.
 | Base de datos | PostgreSQL 18, un esquema por módulo | `backend/**/migraciones/` | Esquema completo (45 tablas) en migraciones por módulo |
 | Frontend | Astro + React | `frontend/` | Pendiente (fase 0, parte de frontend) |
 | Pruebas E2E | Playwright | `e2e/` | Pendiente |
-| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API, worker, Gotenberg (PDF), respaldos con restauración probada, Caddy (producción, `docker-compose.prod.yml`) y Mailpit (desarrollo y E2E) |
+| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API, worker, Gotenberg (PDF), respaldos con restauración probada y Mailpit (desarrollo y E2E). En producción lo despliega Dokploy (su Traefik da HTTPS) |
 | Pruebas de API y carga | newman, Node | [`pruebas/`](pruebas/) | Recorrido completo de la colección (`make coleccion`) y pruebas de rendimiento (`make rendimiento`) |
 
 ## Documentación
@@ -37,7 +37,7 @@ el frontend no exista, la cuenta se activa con `POST /api/v1/auth/activacion`.
 
 `make ayuda` lista todos los atajos (`backend-lint`, `backend-pruebas`, `verificar-esquema`, `coleccion`, `respaldo`…).
 
-Producción: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (ver el
+Producción: Dokploy despliega `docker-compose.yml` (variables, dominios y respaldos en el
 [runbook](docs/operacion/runbook.md)).
 
 ## Estructura del backend

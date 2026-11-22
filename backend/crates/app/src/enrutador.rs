@@ -14,7 +14,7 @@ use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::get;
 use axum::{Extension, Router};
 use plataforma::http::{
-    anotar_ruta, cabeceras_de_seguridad, limitar_uso, ruta_no_encontrada, verificar_origen,
+    anotar_ruta, cabeceras_de_seguridad, hsts, limitar_uso, ruta_no_encontrada, verificar_origen,
 };
 use tower_http::LatencyUnit;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -93,7 +93,7 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         )
         .layer(tiempo_maximo(TIEMPO_MAXIMO));
 
-    // Fotos públicas. En producción Caddy sirve `/media/publico/*` antes de llegar aquí.
+    // Fotos públicas (`/media/publico/*`): el proxy (Traefik) también las enruta a la API.
     let media = composicion
         .archivos
         .rutas_media()
@@ -110,22 +110,28 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         Some(limites) => app.layer(from_fn_with_state(limites.clone(), limitar_uso)),
         None => app,
     };
-    app.layer(Extension(composicion.sesiones.clone()))
+    let app = app
+        .layer(Extension(composicion.sesiones.clone()))
         .layer(Extension(composicion.confianza_proxy))
-        .layer(from_fn(cabeceras_de_seguridad))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(SpanPeticion)
-                .on_request(())
-                .on_response(
-                    DefaultOnResponse::new()
-                        .level(Level::INFO)
-                        .latency_unit(LatencyUnit::Millis),
-                )
-                .on_failure(DefaultOnFailure::new().level(Level::WARN)),
-        )
-        .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(from_fn(cabeceras_de_seguridad));
+    let app = if composicion.https {
+        app.layer(from_fn(hsts))
+    } else {
+        app
+    };
+    app.layer(
+        TraceLayer::new_for_http()
+            .make_span_with(SpanPeticion)
+            .on_request(())
+            .on_response(
+                DefaultOnResponse::new()
+                    .level(Level::INFO)
+                    .latency_unit(LatencyUnit::Millis),
+            )
+            .on_failure(DefaultOnFailure::new().level(Level::WARN)),
+    )
+    .layer(PropagateRequestIdLayer::x_request_id())
+    .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
 }
 
 #[cfg(test)]
@@ -178,6 +184,9 @@ mod pruebas {
         assert_eq!(estado, StatusCode::OK);
         assert_eq!(cuerpo["estado"], "viva");
         assert!(cabeceras.contains_key("x-request-id"));
+        // DIAMANTE_URL_PUBLICA es https: el navegador debe quedarse en HTTPS (HSTS).
+        assert_eq!(cabeceras[header::STRICT_TRANSPORT_SECURITY], "max-age=31536000");
+        assert_eq!(cabeceras[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     }
 
     #[tokio::test]
