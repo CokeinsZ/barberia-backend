@@ -158,6 +158,9 @@ pub struct NuevoAviso {
 #[async_trait]
 pub trait Avisos<C: Send>: Send + Sync + fmt::Debug {
     async fn crear(&self, contexto: &mut C, aviso: NuevoAviso) -> Result<i64, ErrorPersistencia>;
+
+    /// Cuántos avisos no se han leído (alertas del dashboard, RF-DAS-08).
+    async fn no_leidos(&self, contexto: &mut C) -> Result<i64, ErrorPersistencia>;
 }
 
 /// Estado de un mensaje de la cola, sin sus variables (pueden ser secretas).

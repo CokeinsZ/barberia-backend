@@ -5,11 +5,12 @@ agendamiento en línea, panel del administrador y panel del barbero.
 
 | Parte | Tecnología | Carpeta | Estado |
 |---|---|---|---|
-| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 a 5 listas: fundaciones, `identidad`, `negocio`, `auditoria`, `archivos`, `catalogo`, `barberos`, `clientes`, `verificacion`, `agenda`, `notificaciones` (correo, WhatsApp simulado hasta tener Meta, webhooks y avisos), `trabajos` (recordatorios y mantenimiento) y `ventas` (caja y cierres) |
+| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 a 7 listas: fundaciones, `identidad`, `negocio`, `auditoria`, `archivos`, `catalogo`, `barberos`, `clientes`, `verificacion`, `agenda`, `notificaciones` (correo, WhatsApp simulado hasta tener Meta, webhooks y avisos), `trabajos` (recordatorios y mantenimiento), `ventas` (caja y cierres), `reportes` (dashboard, liquidaciones y PDF) y endurecimiento para producción |
 | Base de datos | PostgreSQL 18, un esquema por módulo | `backend/**/migraciones/` | Esquema completo (45 tablas) en migraciones por módulo |
 | Frontend | Astro + React | `frontend/` | Pendiente (fase 0, parte de frontend) |
 | Pruebas E2E | Playwright | `e2e/` | Pendiente |
-| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API (con el volumen de archivos), worker y Mailpit (desarrollo y E2E) |
+| Infraestructura | Docker Compose | [`infra/`](infra/), `docker-compose*.yml` | Base de datos, migraciones, API, worker, Gotenberg (PDF), respaldos con restauración probada, Caddy (producción, `docker-compose.prod.yml`) y Mailpit (desarrollo y E2E) |
+| Pruebas de API y carga | newman, Node | [`pruebas/`](pruebas/) | Recorrido completo de la colección (`make coleccion`) y pruebas de rendimiento (`make rendimiento`) |
 
 ## Documentación
 
@@ -17,8 +18,9 @@ agendamiento en línea, panel del administrador y panel del barbero.
 - [Plan de desarrollo](docs/plan-de-desarrollo.md)
 - Diseño: [base de datos](docs/diseno/base-de-datos.md), [API](docs/diseno/api.md), [pruebas E2E](docs/diseno/pruebas-e2e.md)
 - [Decisiones de arquitectura (ADR)](docs/decisiones/)
+- Operación: [runbook](docs/operacion/runbook.md) (despliegue, respaldos, restauración, vigilancia), [revisión de seguridad](docs/operacion/seguridad.md) (OWASP ASVS nivel 1) e [informe de rendimiento](docs/operacion/rendimiento.md)
 - Módulo de referencia: [`backend/modulos/negocio`](backend/modulos/negocio/README.md)
-- Pruebas manuales: [colección de Postman](docs/pruebas-manuales/diamante-barberia.postman_collection.json) (305 peticiones por módulo, verificada con newman)
+- Pruebas manuales: [colección de Postman](docs/pruebas-manuales/diamante-barberia.postman_collection.json) (327 peticiones por módulo; `make coleccion` la corre completa con newman)
 
 ## Arranque rápido
 
@@ -33,7 +35,10 @@ La invitación muestra el enlace de activación en la terminal y llega también 
 (<http://localhost:8025>). El enlace apunta al frontend (`/acceso/activar#token=…`); mientras
 el frontend no exista, la cuenta se activa con `POST /api/v1/auth/activacion`.
 
-`make ayuda` lista todos los atajos (`backend-lint`, `backend-pruebas`, `verificar-esquema`…).
+`make ayuda` lista todos los atajos (`backend-lint`, `backend-pruebas`, `verificar-esquema`, `coleccion`, `respaldo`…).
+
+Producción: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (ver el
+[runbook](docs/operacion/runbook.md)).
 
 ## Estructura del backend
 
@@ -44,7 +49,7 @@ backend/
 │   ├── contratos/      # eventos entre módulos
 │   ├── plataforma/     # configuración, PostgreSQL, HTTP, telemetría; migración base
 │   └── app/            # raíz de composición y binario `diamante` (api | worker | migrar | salud | crear-administrador)
-├── modulos/            # 13 módulos, cada uno con su esquema, sus capas y sus pruebas
+├── modulos/            # 13 módulos, cada uno con su esquema (salvo reportes, que solo lee vistas), sus capas y sus pruebas
 └── scripts/            # verificar-esquema.sh, estructurar-modulo.sh
 ```
 

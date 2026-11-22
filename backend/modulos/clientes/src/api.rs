@@ -77,6 +77,11 @@ pub trait ClientesAgenda<C: Send>: Send + Sync + fmt::Debug {
         id: IdCliente,
         activos: bool,
     ) -> Result<(), ErrorClientes>;
+    /// Días sin volver a partir de los cuales un cliente queda «por reactivar» (DA-07).
+    async fn dias_inactividad(&self, cx: &mut C) -> Result<i64, ErrorClientes>;
+    /// Solicitudes del titular sin responder (consultas, correcciones y supresiones; alertas
+    /// del dashboard, RF-DAS-08).
+    async fn solicitudes_abiertas(&self, cx: &mut C) -> Result<i64, ErrorClientes>;
 }
 
 /// Puerto que implementa `app` con la fachada de `agenda`: antes de anonimizar a un cliente hay

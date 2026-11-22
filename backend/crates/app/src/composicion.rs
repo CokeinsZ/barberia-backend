@@ -16,8 +16,9 @@ use nucleo::eventos::BusEventos;
 use nucleo::{Reloj, RelojDePruebas, RelojSistema};
 use plataforma::base_datos::{UnidadDeTrabajo, conectar};
 use plataforma::configuracion::Configuracion;
-use plataforma::http::{ConfianzaProxy, OrigenesPermitidos, Sesiones};
+use plataforma::http::{ConfianzaProxy, LimitesDeUso, OrigenesPermitidos, Sesiones};
 use plataforma::seguridad::{Cifrador, FirmadorUrls};
+use reportes::{DependenciasReportes, ModuloReportes};
 use sqlx::PgPool;
 use trabajos::ModuloTrabajos;
 use ventas::{DependenciasVentas, ModuloVentas};
@@ -38,6 +39,8 @@ pub(crate) struct Composicion {
     pub(crate) sesiones: Sesiones,
     pub(crate) origenes: OrigenesPermitidos,
     pub(crate) confianza_proxy: ConfianzaProxy,
+    /// Límites de uso por IP y por sesión (sin ellos solo en pruebas de carga).
+    pub(crate) limites: Option<LimitesDeUso>,
     pub(crate) identidad: ModuloIdentidad,
     pub(crate) negocio: ModuloNegocio,
     pub(crate) auditoria: ModuloAuditoria,
@@ -49,6 +52,7 @@ pub(crate) struct Composicion {
     pub(crate) verificacion: ModuloVerificacion,
     pub(crate) agenda: ModuloAgenda,
     pub(crate) ventas: ModuloVentas,
+    pub(crate) reportes: ModuloReportes,
     pub(crate) trabajos: ModuloTrabajos,
     /// Rutas `/api/v1/_pruebas/*` (solo con `DIAMANTE_PRUEBAS_E2E=true`).
     pub(crate) rutas_de_pruebas: bool,
@@ -198,6 +202,22 @@ impl Composicion {
             bus: bus.clone(),
         });
 
+        // Solo lectura de las vistas publicadas; la única escritura es la auditoría de los PDF.
+        if configuracion.gotenberg_url.is_none() {
+            tracing::warn!("sin DIAMANTE_GOTENBERG_URL: los PDF de los reportes responden 503");
+        }
+        let reportes = ModuloReportes::con_postgres(DependenciasReportes {
+            pool: pool.clone(),
+            reloj: reloj.clone(),
+            equipo: barberos.equipo(),
+            calendario: negocio.calendario(),
+            negocio: negocio.parametros(),
+            clientes: clientes.clientes(),
+            avisos: notificaciones.avisos(),
+            auditor: auditoria.auditor(),
+            gotenberg_url: configuracion.gotenberg_url.clone(),
+        });
+
         // Suscripciones (se agregan con el bus ya repartido: los manejadores usan fachadas
         // construidas arriba).
         ModuloClientes::suscribir(&bus);
@@ -224,6 +244,7 @@ impl Composicion {
             sesiones: Sesiones(identidad.validador_sesiones()),
             origenes: OrigenesPermitidos(Arc::new(configuracion.origenes_permitidos.clone())),
             confianza_proxy: ConfianzaProxy(configuracion.confiar_proxy),
+            limites: configuracion.limites_de_uso.then(LimitesDeUso::default),
             identidad,
             negocio,
             auditoria,
@@ -235,6 +256,7 @@ impl Composicion {
             verificacion,
             agenda,
             ventas,
+            reportes,
             trabajos,
             rutas_de_pruebas: configuracion.rutas_de_pruebas,
             reloj_de_pruebas,

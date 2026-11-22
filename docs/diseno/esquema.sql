@@ -926,6 +926,33 @@ CROSS JOIN LATERAL (
 ) l
 WHERE v.estado = 'registrada';
 
+-- Vistas publicadas para `reportes`: servicios vendidos y lo cobrado por método (solo ventas
+-- vigentes).
+CREATE VIEW ventas.v_venta_linea AS
+SELECT vl.venta_id,
+       v.fecha_operacion,
+       v.registrada_en,
+       v.barbero_id,
+       v.cliente_id,
+       vl.posicion,
+       vl.servicio_id,
+       vl.precio
+FROM ventas.venta_linea vl
+JOIN ventas.venta v ON v.id = vl.venta_id
+WHERE v.estado = 'registrada';
+
+CREATE VIEW ventas.v_venta_pago AS
+SELECT p.venta_id,
+       v.fecha_operacion,
+       v.barbero_id,
+       m.codigo AS metodo,
+       m.nombre AS metodo_nombre,
+       p.monto
+FROM ventas.venta_pago p
+JOIN ventas.venta v ON v.id = p.venta_id
+JOIN ventas.metodo_pago m ON m.id = p.metodo_pago_id
+WHERE v.estado = 'registrada';
+
 -- =====================================================================
 -- AUDITORÍA (solo inserción)
 -- =====================================================================

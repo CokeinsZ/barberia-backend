@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use auditoria::api::EntradaAuditoria;
 use nucleo::identificadores::IdCliente;
-use nucleo::{Actor, Celular};
+use nucleo::{Actor, Celular, SolicitudPagina};
 
 use super::casos::celular_en_uso;
 use super::errores::ErrorClientes;
@@ -111,5 +111,17 @@ impl<C: Send> ClientesAgenda<C> for FachadaClientes<C> {
         activos: bool,
     ) -> Result<(), ErrorClientes> {
         Ok(self.p.clientes.cambiar_recordatorios(cx, id, activos).await?)
+    }
+
+    async fn dias_inactividad(&self, cx: &mut C) -> Result<i64, ErrorClientes> {
+        Ok(self.p.clientes.umbrales(cx).await?.dias_inactividad)
+    }
+
+    async fn solicitudes_abiertas(&self, cx: &mut C) -> Result<i64, ErrorClientes> {
+        let una = SolicitudPagina {
+            pagina: 1,
+            por_pagina: 1,
+        };
+        Ok(self.p.titular.solicitudes(cx, true, una).await?.1)
     }
 }

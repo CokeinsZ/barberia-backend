@@ -20,7 +20,13 @@ mod tareas;
 mod worker;
 
 #[cfg(test)]
+mod pruebas_autorizacion;
+#[cfg(test)]
+mod pruebas_concurrencia;
+#[cfg(test)]
 mod pruebas_postgres;
+#[cfg(test)]
+mod pruebas_reportes;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;

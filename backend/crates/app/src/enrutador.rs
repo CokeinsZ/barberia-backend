@@ -1,20 +1,54 @@
 //! Enrutador HTTP: monta `/api/v1` una sola vez con las rutas de cada módulo y agrega las
-//! capas transversales (id de solicitud, trazas, tiempo máximo, sesión, IP del cliente y
-//! verificación de `Origin`).
+//! capas transversales: id de solicitud, trazas (con la plantilla de la ruta, nunca la URL con
+//! sus tokens o datos personales), cabeceras de seguridad, IP del cliente, límites de uso por
+//! IP y por sesión, sesión, tiempo máximo y verificación de `Origin`.
+//!
+//! Tiempo máximo: 30 s por petición, salvo los reportes (120 s), cuyos PDF pueden tardar
+//! (RNF-REN-04: hasta 30 s el de todos los barberos, en el servidor de producción).
 
 use std::time::Duration;
 
-use axum::http::StatusCode;
-use axum::middleware::from_fn_with_state;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::get;
 use axum::{Extension, Router};
-use plataforma::http::{ruta_no_encontrada, verificar_origen};
+use plataforma::http::{
+    anotar_ruta, cabeceras_de_seguridad, limitar_uso, ruta_no_encontrada, verificar_origen,
+};
+use tower_http::LatencyUnit;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, MakeSpan, TraceLayer};
+use tracing::Level;
 
 use crate::composicion::Composicion;
 use crate::salud;
+
+/// Tiempo máximo de una petición común.
+const TIEMPO_MAXIMO: Duration = Duration::from_secs(30);
+/// Tiempo máximo de los reportes (los PDF esperan a Gotenberg).
+const TIEMPO_MAXIMO_REPORTES: Duration = Duration::from_secs(120);
+
+fn tiempo_maximo(duracion: Duration) -> TimeoutLayer {
+    TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, duracion)
+}
+
+/// Traza de cada petición: método, ruta (la plantilla, que anota [`anotar_ruta`]) e id de
+/// solicitud; al responder, estado y latencia en nivel `info` (los 5xx, además, en `warn`).
+#[derive(Debug, Clone, Copy)]
+struct SpanPeticion;
+
+impl MakeSpan<Body> for SpanPeticion {
+    fn make_span(&mut self, peticion: &Request<Body>) -> tracing::Span {
+        let id = peticion
+            .headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-");
+        tracing::info_span!("http", metodo = %peticion.method(), ruta = tracing::field::Empty, id = %id)
+    }
+}
 
 pub(crate) fn construir(composicion: &Composicion) -> Router {
     let v1 = Router::new()
@@ -29,33 +63,67 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         .merge(composicion.agenda.rutas())
         .merge(composicion.notificaciones.rutas())
         .merge(composicion.ventas.rutas())
+        .layer(tiempo_maximo(TIEMPO_MAXIMO))
+        .merge(
+            composicion
+                .reportes
+                .rutas()
+                .layer(tiempo_maximo(TIEMPO_MAXIMO_REPORTES)),
+        )
         .layer(from_fn_with_state(composicion.origenes.clone(), verificar_origen));
 
     // Solo en desarrollo y pruebas: mensajes del WhatsApp simulado, reloj y pasada del worker.
     let v1 = if composicion.rutas_de_pruebas {
-        v1.merge(composicion.notificaciones.rutas_de_pruebas())
-            .merge(crate::pruebas_e2e::rutas(composicion.clone()))
+        v1.merge(
+            composicion
+                .notificaciones
+                .rutas_de_pruebas()
+                .merge(crate::pruebas_e2e::rutas(composicion.clone()))
+                .layer(tiempo_maximo(TIEMPO_MAXIMO)),
+        )
     } else {
         v1
     };
 
-    Router::new()
+    let salud = Router::new()
         .route("/api/salud", get(salud::viva))
         .route(
             "/api/salud/lista",
             get(salud::lista).with_state(composicion.pool.clone()),
         )
-        .nest("/api/v1", v1)
-        // Fotos públicas. En producción Caddy sirve `/media/publico/*` antes de llegar aquí.
-        .merge(composicion.archivos.rutas_media())
-        .fallback(ruta_no_encontrada)
-        .layer(Extension(composicion.sesiones.clone()))
+        .layer(tiempo_maximo(TIEMPO_MAXIMO));
+
+    // Fotos públicas. En producción Caddy sirve `/media/publico/*` antes de llegar aquí.
+    let media = composicion
+        .archivos
+        .rutas_media()
+        .layer(tiempo_maximo(TIEMPO_MAXIMO));
+
+    // `anotar_ruta` va en cada enrutador (con `route_layer`): ahí ya se conoce la plantilla
+    // completa de la ruta, `/api/v1` incluido.
+    let app = Router::new()
+        .merge(salud.route_layer(from_fn(anotar_ruta)))
+        .nest("/api/v1", v1.route_layer(from_fn(anotar_ruta)))
+        .merge(media.route_layer(from_fn(anotar_ruta)))
+        .fallback(ruta_no_encontrada);
+    let app = match &composicion.limites {
+        Some(limites) => app.layer(from_fn_with_state(limites.clone(), limitar_uso)),
+        None => app,
+    };
+    app.layer(Extension(composicion.sesiones.clone()))
         .layer(Extension(composicion.confianza_proxy))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(30),
-        ))
-        .layer(TraceLayer::new_for_http())
+        .layer(from_fn(cabeceras_de_seguridad))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(SpanPeticion)
+                .on_request(())
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(Level::INFO)
+                        .latency_unit(LatencyUnit::Millis),
+                )
+                .on_failure(DefaultOnFailure::new().level(Level::WARN)),
+        )
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
 }

@@ -100,6 +100,12 @@ pub struct Configuracion {
     /// La API también ejecuta las tareas del worker (`DIAMANTE_WORKER_EN_API=true`). En el
     /// ambiente E2E así todo comparte un solo reloj (`/_pruebas/reloj`).
     pub worker_en_api: bool,
+    /// Gotenberg (HTML → PDF), p. ej. `http://gotenberg:3000`, sin barra final. Sin él, los
+    /// PDF de los reportes responden 503 y lo demás sigue funcionando.
+    pub gotenberg_url: Option<String>,
+    /// Límites de uso por IP y por sesión (`DIAMANTE_LIMITES_DE_USO`, activos por defecto). Solo
+    /// las pruebas de carga los apagan; en producción no se pueden apagar.
+    pub limites_de_uso: bool,
 }
 
 /// WhatsApp. Sin credenciales de Meta, fuera de producción se usa el adaptador simulado; en
@@ -343,6 +349,27 @@ impl Configuracion {
             }
         };
 
+        let limites_de_uso = match leer("DIAMANTE_LIMITES_DE_USO").as_deref() {
+            None | Some("true") => true,
+            Some("false") if entorno == Entorno::Produccion => {
+                invalidas.push("DIAMANTE_LIMITES_DE_USO=false no se permite en producción".to_owned());
+                true
+            }
+            Some("false") => false,
+            Some(otro) => {
+                invalidas.push(format!("DIAMANTE_LIMITES_DE_USO={otro} (use true o false)"));
+                true
+            }
+        };
+        let gotenberg_url = leer("DIAMANTE_GOTENBERG_URL").map(|url| url.trim_end_matches('/').to_owned());
+        if let Some(url) = &gotenberg_url
+            && !(url.starts_with("http://") || url.starts_with("https://"))
+        {
+            invalidas.push(format!(
+                "DIAMANTE_GOTENBERG_URL={url} (debe empezar por http:// o https://)"
+            ));
+        }
+
         if !faltantes.is_empty() || !invalidas.is_empty() {
             return Err(ErrorConfiguracion { faltantes, invalidas });
         }
@@ -368,6 +395,8 @@ impl Configuracion {
                 webhook,
             },
             worker_en_api,
+            gotenberg_url,
+            limites_de_uso,
         })
     }
 }
@@ -491,6 +520,46 @@ mod pruebas {
             FIRMA,
             CIFRADO,
             ("DIAMANTE_PRUEBAS_E2E", "true"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn los_limites_de_uso_solo_se_apagan_fuera_de_produccion() {
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        assert!(c.limites_de_uso);
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_LIMITES_DE_USO", "false"),
+        ]))
+        .unwrap();
+        assert!(!c.limites_de_uso);
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
+            FIRMA,
+            CIFRADO,
+            ("DIAMANTE_LIMITES_DE_USO", "false"),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.invalidas.len(), 1);
+    }
+
+    #[test]
+    fn gotenberg_es_opcional_y_debe_ser_una_url() {
+        let c = Configuracion::desde(fuente(&[("DATABASE_URL", "x")])).unwrap();
+        assert!(c.gotenberg_url.is_none());
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_GOTENBERG_URL", "http://gotenberg:3000/"),
+        ]))
+        .unwrap();
+        assert_eq!(c.gotenberg_url.as_deref(), Some("http://gotenberg:3000"));
+        let error = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "x"),
+            ("DIAMANTE_GOTENBERG_URL", "gotenberg:3000"),
         ]))
         .unwrap_err();
         assert_eq!(error.invalidas.len(), 1);

@@ -99,6 +99,7 @@ pub(crate) struct SesionVigente {
     pub(crate) id: i64,
     pub(crate) usuario: Usuario,
     pub(crate) duracion: DuracionSesion,
+    pub(crate) creada_en: DateTime<Utc>,
     pub(crate) ultimo_uso_en: DateTime<Utc>,
 }
 

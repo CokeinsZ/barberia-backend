@@ -77,7 +77,14 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | `POST /auth/sesion` | 10 por IP cada 15 min; la cuenta se bloquea 15 min tras 5 fallos |
 | `POST /auth/recuperacion` | 3 por correo y 10 por IP por hora (siempre responde 202) |
 | Resto de `/publico` | 120 por minuto |
-| Panel | 600 por minuto por sesión |
+| Panel | 600 por minuto por sesión (y 1.200 por minuto por IP, para que inventar cookies no sirva) |
+| Otras rutas sin sesión | 120 por minuto |
+
+Al superarlos: `429 demasiados_intentos` con `Retry-After`. No se limitan la salud, los webhooks firmados ni las fotos públicas. Detrás de Caddy la IP es la que él agrega a `X-Forwarded-For`; un valor falso del cliente no la cambia. Solo las pruebas de carga los apagan (`DIAMANTE_LIMITES_DE_USO=false`, rechazado en producción).
+
+### 1.5 Cabeceras y tiempos
+
+Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `X-Robots-Tag: noindex`, `x-request-id` y `Cache-Control: no-store` (salvo la landing pública, 60 s). Tiempo máximo por petición: 30 s; los reportes, 120 s (`408` al superarlo).
 
 ---
 
@@ -230,19 +237,21 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 
 ### 2.10 Reportes y dashboard (módulo `reportes`, solo lectura)
 
+Periodo (RF-REP-01, RN-22): `?mes=AAAA-MM` o `?desde=&hasta=`; sin nada, el mes en curso hasta hoy. Un mes futuro, un rango que termina después de hoy, al revés o de más de un año responden `422` con el campo. Los PDF responden `application/pdf` como adjunto (`resumen-2026-11.pdf`, `Cache-Control: private, no-store`), quedan en la auditoría (RF-SIS-07) y, si Gotenberg no responde, `503 pdf_no_disponible` (los permisos se revisan antes). Tiempo máximo de estas rutas: 120 s. Detalle de cálculos en el [README del módulo](../../backend/modulos/reportes/README.md).
+
 | Método | Ruta | Perfil | Descripción | Requisitos |
 |---|---|---|---|---|
-| GET | `/reportes/dashboard?fecha=` | Admin | Indicadores del día con comparación, tendencia de 12 días, citas por estado y próximas, rendimiento y ocupación por barbero. | RF-DAS-01…04 |
-| GET | `/reportes/tendencias?mes=` | Admin | Ventas por servicio, clientes del mes, clientes por mes frente al año anterior y horas pico. | RF-DAS-05…07 |
-| GET | `/reportes/alertas` | Admin | Citas de mañana sin confirmar, cumpleaños de la semana, ausencias, clientes por reactivar y avisos no leídos. | RF-DAS-08 |
-| GET | `/reportes/resumen?desde=&hasta=` | Admin | Resumen de ventas y servicios (JSON para la vista previa). | RF-REP-01, RF-REP-02 |
-| GET | `/reportes/resumen.pdf?desde=&hasta=` | Admin | El mismo reporte en PDF. | RF-REP-06 |
-| GET | `/reportes/barberos/{id}?desde=&hasta=` | Admin; Barbero (propio) | Detallado y liquidación. | RF-REP-03, RF-PBA-06 |
-| GET | `/reportes/barberos/{id}.pdf?desde=&hasta=` | Admin; Barbero (propio) | PDF del detallado. | RF-REP-06 |
-| GET | `/reportes/barberos.pdf?desde=&hasta=` | Admin | Todos los barberos en un solo PDF, uno por sección. | RF-REP-04 |
-| GET | `/reportes/clientes?desde=&hasta=` y `.pdf` | Admin | Reporte de clientes y lista para reactivar. | RF-REP-05 |
-| GET | `/reportes/{tipo}.xlsx?desde=&hasta=` | Admin | Exportación para contabilidad. | RF-REP-07 (Could) |
-| GET | `/reportes/servicios/{id}?mes=` | Admin | Vendidos e ingresos del servicio. | RF-SER-07 (Could) |
+| GET | `/reportes/dashboard?fecha=` | Admin | Indicadores del día (hoy hasta la hora actual) con comparación frente al mismo día de la semana anterior a la misma hora, tendencia de 12 días, citas por estado y próximas, rendimiento y ocupación por barbero y ausentes. | RF-DAS-01…04 |
+| GET | `/reportes/tendencias?mes=` | Admin | Ventas por servicio, clientes del mes (nuevos, recurrentes, retorno), clientes por mes frente al año anterior y horas pico de las últimas 4 semanas. | RF-DAS-05…07 |
+| GET | `/reportes/alertas` | Admin | Citas de mañana sin confirmar, cumpleaños de la semana, ausencias, clientes por reactivar, solicitudes del titular abiertas y avisos no leídos. | RF-DAS-08 |
+| GET | `/reportes/resumen` | Admin | Resumen de ventas y servicios: totales, por semana, por servicio, por método de pago y por barbero con comisión, propinas y total a pagar. | RF-REP-01, RF-REP-02 |
+| GET | `/reportes/resumen.pdf` | Admin | El mismo reporte en PDF. | RF-REP-06 |
+| GET | `/reportes/barberos/{id}` | Admin; Barbero (propio; el de otro, `404`) | Detallado y liquidación (cada venta con su porcentaje). | RF-REP-03, RF-PBA-06 |
+| GET | `/reportes/barberos/{id}.pdf` | Admin; Barbero (propio) | PDF del detallado. | RF-REP-06 |
+| GET | `/reportes/barberos.pdf` | Admin | Todos los barberos del periodo en un solo PDF, uno por página. | RF-REP-04 |
+| GET | `/reportes/clientes` y `/reportes/clientes.pdf` | Admin | Reporte de clientes, los de más visitas y la lista para reactivar. | RF-REP-05 |
+| GET | `/reportes/{tipo}.xlsx` | Admin | Exportación para contabilidad. *Pendiente (Could).* | RF-REP-07 |
+| GET | `/reportes/servicios/{id}?mes=` | Admin | Vendidos e ingresos del servicio. *Pendiente (Could).* | RF-SER-07 |
 
 ### 2.11 Avisos, mensajes y auditoría (módulos `notificaciones` y `auditoria`)
 

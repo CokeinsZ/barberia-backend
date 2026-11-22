@@ -10,6 +10,7 @@ use nucleo::identificadores::{IdBarbero, IdServicio};
 use nucleo::{ErrorPersistencia, TipoActor};
 use plataforma::seguridad::generar_token;
 
+use super::concurrencia::con_reintentos;
 use super::dto::CitaCreadaDto;
 use super::errores::ErrorAgenda;
 use super::puertos::{
@@ -53,6 +54,10 @@ impl<C: Send + 'static> Reserva<C> {
     /// confirmación por WhatsApp. Si la hora se tomó entre medio, nada queda guardado (el
     /// comprobante sigue sirviendo) y el error trae horas alternativas.
     pub(crate) async fn crear(&self, s: SolicitudReserva) -> Result<CitaCreadaDto, ErrorAgenda> {
+        con_reintentos(|| self.intentar_crear(s.clone())).await
+    }
+
+    async fn intentar_crear(&self, s: SolicitudReserva) -> Result<CitaCreadaDto, ErrorAgenda> {
         if !s.autoriza_tratamiento_datos {
             return Err(ErrorAgenda::campo(
                 "autoriza_tratamiento_datos",

@@ -1,5 +1,6 @@
-# Docker Compose base (producción). Fases 0 y 1: base de datos y backend (API, worker y
-# migraciones). El proxy (Caddy), el frontend, Gotenberg y los respaldos se agregan en sus fases.
+# Docker Compose base (producción): base de datos, backend (API, worker y migraciones),
+# Gotenberg (PDF de los reportes) y respaldos. El proxy (Caddy) está en docker-compose.prod.yml
+# y el frontend se agrega en su fase.
 #
 # Desarrollo:  docker compose up            (carga también docker-compose.override.yml)
 # Producción:  docker compose -f docker-compose.yml up -d
@@ -29,6 +30,9 @@ x-entorno-app: &entorno-app
   # Firmas de las URL de descarga y cifrado de los datos sensibles (obligatorias en producción).
   DIAMANTE_CLAVE_FIRMA: ${DIAMANTE_CLAVE_FIRMA:-}
   DIAMANTE_CLAVE_CIFRADO: ${DIAMANTE_CLAVE_CIFRADO:-}
+  # PDF de los reportes (sin Gotenberg, las descargas responden 503 y lo demás funciona).
+  DIAMANTE_GOTENBERG_URL: ${DIAMANTE_GOTENBERG_URL:-http://gotenberg:3000}
+  DIAMANTE_LIMITES_DE_USO: ${DIAMANTE_LIMITES_DE_USO:-true}
 
 services:
   db:
@@ -38,6 +42,8 @@ services:
       POSTGRES_USER: diamante_propietario
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
       DIAMANTE_APP_PASSWORD: ${DIAMANTE_APP_PASSWORD:?Defina DIAMANTE_APP_PASSWORD en .env}
+      # Rol de solo lectura de los respaldos (se crea con el volumen; ver docs/operacion/runbook.md).
+      DIAMANTE_RESPALDO_PASSWORD: ${DIAMANTE_RESPALDO_PASSWORD:-}
     volumes:
       - db_datos:/var/lib/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -69,6 +75,7 @@ services:
       - archivos:/datos/archivos
     depends_on:
       migraciones: { condition: service_completed_successfully }
+      gotenberg: { condition: service_started }
     healthcheck:
       test: ["CMD", "/app/diamante", "salud"]
       interval: 10s
@@ -90,6 +97,51 @@ services:
     depends_on:
       migraciones: { condition: service_completed_successfully }
 
+  # HTML → PDF de los reportes (RF-REP-06). Solo en la red interna. Chromium sin JavaScript y
+  # sin red (solo los archivos que recibe en /tmp): si algún dato llegara sin escapar, no
+  # podría cargar nada de afuera ni de la red interna. Sin LibreOffice ni webhooks.
+  gotenberg:
+    image: gotenberg/gotenberg:8.40.0
+    command:
+      - gotenberg
+      - --api-timeout=60s
+      - --chromium-disable-javascript=true
+      - --chromium-allow-list=^file:///tmp/.*
+      - --libreoffice-disable-routes=true
+      - --webhook-disable=true
+      - --prometheus-disable-collect=true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Respaldos (RNF-BAK): la base cada hora (48 h) y, a diario, base y archivos (30 días), con
+  # copia externa cifrada por rclone si se configura y prueba de restauración los domingos.
+  respaldo:
+    build:
+      context: .
+      dockerfile: infra/docker/respaldo.Dockerfile
+    image: diamante-respaldo:${VERSION:-local}
+    environment:
+      PGHOST: db
+      PGDATABASE: diamante
+      PGUSER: diamante_respaldo
+      PGPASSWORD: ${DIAMANTE_RESPALDO_PASSWORD:-}
+      DIAMANTE_RESPALDO_REMOTO: ${DIAMANTE_RESPALDO_REMOTO:-}
+      DIAMANTE_RESPALDO_CADA_MINUTOS: ${DIAMANTE_RESPALDO_CADA_MINUTOS:-60}
+      DIAMANTE_RESPALDO_HORA_DIARIA: ${DIAMANTE_RESPALDO_HORA_DIARIA:-2}
+      DIAMANTE_RESPALDO_RETENCION_DIAS: ${DIAMANTE_RESPALDO_RETENCION_DIAS:-30}
+    volumes:
+      - respaldos:/respaldos
+      - archivos:/datos/archivos:ro
+      - ./infra/respaldo/rclone:/config/rclone:ro
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+
 volumes:
   db_datos:
   archivos:
+  respaldos:

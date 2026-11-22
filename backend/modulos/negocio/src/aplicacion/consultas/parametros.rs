@@ -31,6 +31,14 @@ impl<C: Send> ParametrosNegocio<C> for Parametros<C> {
     async fn comision_por_defecto(&self, cx: &mut C) -> Result<Porcentaje, ErrorNegocio> {
         Ok(self.p.negocio.obtener(cx).await?.porcentaje_comision_defecto())
     }
+
+    async fn identificacion(&self, cx: &mut C) -> Result<crate::api::IdentificacionNegocio, ErrorNegocio> {
+        let datos = self.p.negocio.obtener(cx).await?;
+        Ok(crate::api::IdentificacionNegocio {
+            nombre_comercial: datos.nombre_comercial().to_owned(),
+            nit: datos.nit().map(str::to_owned),
+        })
+    }
 }
 
 #[async_trait]

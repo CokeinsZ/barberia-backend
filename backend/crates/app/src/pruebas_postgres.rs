@@ -18,16 +18,16 @@ use tower::ServiceExt;
 use crate::composicion::Composicion;
 use crate::{enrutador, migraciones};
 
-const SITIO: &str = "https://diamante.co";
-const CLAVE: &str = "frase de prueba bien larga";
+pub(crate) const SITIO: &str = "https://diamante.co";
+pub(crate) const CLAVE: &str = "frase de prueba bien larga";
 
-struct Respuesta {
-    estado: StatusCode,
-    cabeceras: axum::http::HeaderMap,
-    json: Value,
+pub(crate) struct Respuesta {
+    pub(crate) estado: StatusCode,
+    pub(crate) cabeceras: axum::http::HeaderMap,
+    pub(crate) json: Value,
 }
 
-async fn pedir(
+pub(crate) async fn pedir(
     app: &Router,
     metodo: Method,
     ruta: &str,
@@ -59,7 +59,7 @@ async fn pedir(
     }
 }
 
-async fn entrar(app: &Router, correo: &str) -> (Value, String) {
+pub(crate) async fn entrar(app: &Router, correo: &str) -> (Value, String) {
     let r = pedir(
         app,
         Method::POST,
@@ -192,7 +192,7 @@ async fn administradora_y_barbero_de_punta_a_punta() {
 // ---------------------------------------------------------------------------------------------
 
 /// Petición con un cuerpo arbitrario (multipart) y respuesta en bytes.
-async fn pedir_bytes(
+pub(crate) async fn pedir_bytes(
     app: &Router,
     metodo: Method,
     ruta: &str,
@@ -224,7 +224,7 @@ async fn pedir_bytes(
 }
 
 /// Cuerpo `multipart/form-data`: (campo, nombre de archivo si es archivo, contenido).
-fn multipart(partes: &[(&str, Option<&str>, &[u8])]) -> (String, Vec<u8>) {
+pub(crate) fn multipart(partes: &[(&str, Option<&str>, &[u8])]) -> (String, Vec<u8>) {
     let frontera = "frontera-de-prueba-7MA4YWxkTrZu0gW";
     let mut cuerpo = Vec::new();
     for (campo, archivo, contenido) in partes {
@@ -244,7 +244,7 @@ fn multipart(partes: &[(&str, Option<&str>, &[u8])]) -> (String, Vec<u8>) {
 }
 
 /// Cabecera PNG mínima con las medidas indicadas.
-fn png(ancho: u32, alto: u32) -> Vec<u8> {
+pub(crate) fn png(ancho: u32, alto: u32) -> Vec<u8> {
     let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     bytes.extend_from_slice(&ancho.to_be_bytes());
     bytes.extend_from_slice(&alto.to_be_bytes());
@@ -253,7 +253,7 @@ fn png(ancho: u32, alto: u32) -> Vec<u8> {
 }
 
 /// Token del último enlace enviado a `correo`, leído de la cola de salida.
-async fn token_del_correo(base: &BaseDePrueba, correo: &str) -> String {
+pub(crate) async fn token_del_correo(base: &BaseDePrueba, correo: &str) -> String {
     let variables: Value = sqlx::query_scalar(
         "SELECT variables FROM notificaciones.mensaje WHERE destinatario = $1 ORDER BY id DESC LIMIT 1",
     )
@@ -270,7 +270,7 @@ async fn token_del_correo(base: &BaseDePrueba, correo: &str) -> String {
         .to_owned()
 }
 
-fn registro(nombres: &str, documento: &str, correo: &str, servicios: Vec<Value>) -> Value {
+pub(crate) fn registro(nombres: &str, documento: &str, correo: &str, servicios: Vec<Value>) -> Value {
     json!({
         "tipo_documento": "CC", "numero_documento": documento, "nombres": nombres, "apellidos": "Ruiz",
         "fecha_nacimiento": "1995-03-02", "celular": "3105559917", "correo": correo, "especialidad": "Fade",
@@ -757,7 +757,7 @@ async fn equipo_catalogo_y_archivos_de_punta_a_punta() {
 // ---------------------------------------------------------------------------------------------
 
 /// Variables del último WhatsApp en cola para `celular` con esa plantilla.
-async fn whatsapp(base: &BaseDePrueba, celular: &str, plantilla: &str) -> Value {
+pub(crate) async fn whatsapp(base: &BaseDePrueba, celular: &str, plantilla: &str) -> Value {
     sqlx::query_scalar(
         "SELECT variables FROM notificaciones.mensaje
          WHERE canal = 'whatsapp' AND destinatario = $1 AND plantilla = $2
@@ -771,7 +771,7 @@ async fn whatsapp(base: &BaseDePrueba, celular: &str, plantilla: &str) -> Value 
 }
 
 /// Pide el código, lo lee de la cola (WhatsApp simulado) y lo confirma.
-async fn verificar(app: &Router, base: &BaseDePrueba, celular: &str) -> Value {
+pub(crate) async fn verificar(app: &Router, base: &BaseDePrueba, celular: &str) -> Value {
     let r = pedir(
         app,
         Method::POST,
@@ -1728,7 +1728,7 @@ async fn ejecutar_trabajos(app: &Router) -> Value {
     r.json
 }
 
-async fn mover_reloj(app: &Router, ahora: &str) {
+pub(crate) async fn mover_reloj(app: &Router, ahora: &str) {
     let r = pedir(
         app,
         Method::POST,

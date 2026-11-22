@@ -223,6 +223,7 @@ struct FilaSesion {
     usuario: IdUsuario,
     huella: Huella,
     duracion: DuracionSesion,
+    creada: DateTime<Utc>,
     ultimo_uso: DateTime<Utc>,
     expira: DateTime<Utc>,
     revocada: bool,
@@ -244,6 +245,7 @@ impl RepositorioSesiones<()> for Sesiones {
             usuario: s.usuario,
             huella: s.huella,
             duracion: s.duracion,
+            creada: s.ahora,
             ultimo_uso: s.ahora,
             expira: s.duracion.expira_en(s.ahora),
             revocada: false,
@@ -269,6 +271,7 @@ impl RepositorioSesiones<()> for Sesiones {
             id: f.id,
             usuario,
             duracion: f.duracion,
+            creada_en: f.creada,
             ultimo_uso_en: f.ultimo_uso,
         }))
     }
@@ -659,6 +662,33 @@ async fn la_sesion_vence_tras_12_horas_sin_uso_y_cada_uso_la_extiende() {
     let recordada = e.entrar_con("laura@diamante.co", CLAVE, true).await.unwrap();
     e.adelantar(TimeDelta::days(29));
     assert!(e.actor(&recordada).await.is_some());
+}
+
+#[tokio::test]
+async fn ni_usandola_a_diario_una_sesion_dura_mas_de_30_dias() {
+    let e = Escenario::nuevo();
+    let recordada = e.entrar_con("laura@diamante.co", CLAVE, true).await.unwrap();
+    for dia in 1..30 {
+        e.adelantar(TimeDelta::days(1));
+        assert!(e.actor(&recordada).await.is_some(), "día {dia}");
+    }
+    e.adelantar(TimeDelta::hours(23));
+    assert!(e.actor(&recordada).await.is_some(), "aún dentro de los 30 días");
+    e.adelantar(TimeDelta::hours(2));
+    assert_eq!(
+        e.actor(&recordada).await,
+        None,
+        "vida máxima: hay que volver a entrar"
+    );
+
+    // La normal también: aunque se use cada 11 horas, a los 30 días vence.
+    let normal = e.entrar("laura@diamante.co", CLAVE).await.unwrap();
+    for _ in 0..65 {
+        e.adelantar(TimeDelta::hours(11));
+        assert!(e.actor(&normal).await.is_some());
+    }
+    e.adelantar(TimeDelta::hours(11));
+    assert_eq!(e.actor(&normal).await, None);
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! Casos de uso del módulo, agrupados por audiencia: sitio público, reserva, gestión por enlace
 //! y panel del personal.
 
+pub(crate) mod concurrencia;
 pub(crate) mod dto;
 pub(crate) mod errores;
 pub(crate) mod fachada;

@@ -3,10 +3,11 @@
 
 PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario:$(POSTGRES_PASSWORD)@127.0.0.1:5432/postgres
 
-.PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema
+.PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema \
+	rol-respaldo respaldo probar-restauracion coleccion rendimiento
 
 ayuda: ## Muestra esta ayuda
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
 
 dev: ## Levanta base de datos, migraciones, API y worker en modo desarrollo
 	docker compose up -d --build --wait
@@ -38,3 +39,23 @@ backend-pruebas: ## Pruebas unitarias y de integración (necesita la base de dat
 
 verificar-esquema: ## Compara las migraciones con docs/diseno/esquema.sql y corre las 27 pruebas
 	cd backend && PRUEBAS_DATABASE_URL=$(PRUEBAS_DATABASE_URL) ./scripts/verificar-esquema.sh
+
+rol-respaldo: ## Crea el rol diamante_respaldo en una base ya existente (usa DIAMANTE_RESPALDO_PASSWORD)
+	@test -n "$(DIAMANTE_RESPALDO_PASSWORD)" || (echo 'Defina DIAMANTE_RESPALDO_PASSWORD en .env' && exit 2)
+	@printf '%s\n' "CREATE ROLE diamante_respaldo LOGIN CREATEDB PASSWORD :'clave' IN ROLE pg_read_all_data;" \
+	  "GRANT CONNECT ON DATABASE diamante TO diamante_respaldo;" \
+	  | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U diamante_propietario -d diamante \
+	    -v clave="$(DIAMANTE_RESPALDO_PASSWORD)"
+
+respaldo: ## Respaldo inmediato (base y archivos) en el volumen de respaldos
+	docker compose --profile respaldo run --rm --no-deps respaldo respaldar.sh diario
+
+probar-restauracion: ## Restaura el respaldo más reciente en una base desechable y lo compara
+	docker compose --profile respaldo run --rm --no-deps respaldo probar-restauracion.sh
+
+coleccion: ## Recorrido completo de la colección de Postman contra un ambiente E2E nuevo (newman)
+	pruebas/api/correr-todo.sh
+
+rendimiento: ## Pruebas de carga con dos años de datos (ver pruebas/rendimiento/README.md)
+	pruebas/rendimiento/correr.sh
+

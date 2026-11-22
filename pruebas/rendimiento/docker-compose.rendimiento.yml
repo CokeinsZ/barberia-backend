@@ -1,0 +1,12 @@
+# Ambiente de rendimiento (sobre el de E2E): sin límites de uso (la carga sale de una sola IP y
+# una sola sesión) y con pg_stat_statements para ver qué consultas pesan.
+#   docker compose -p diamante-rend -f docker-compose.yml -f docker-compose.e2e.yml \
+#     -f pruebas/rendimiento/docker-compose.rendimiento.yml up -d --wait
+services:
+  db:
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=all"]
+
+  api:
+    environment:
+      DIAMANTE_LIMITES_DE_USO: "false"
+      RUST_LOG: warn

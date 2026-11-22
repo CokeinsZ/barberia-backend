@@ -2,3 +2,5 @@
 *
 !backend/
 backend/target/
+# Scripts del servicio de respaldos (infra/docker/respaldo.Dockerfile).
+!infra/respaldo/*.sh

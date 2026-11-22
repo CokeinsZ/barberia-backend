@@ -1,5 +1,6 @@
 # Secretos locales
 .env
+infra/respaldo/rclone/rclone.conf
 
 # Compilación
 backend/target/
@@ -10,3 +11,5 @@ frontend/
 e2e/test-results/
 e2e/playwright-report/
 
+pruebas/rendimiento/base.json
+pruebas/rendimiento/resultados.json

@@ -35,7 +35,12 @@ impl<C: Send> ValidarSesion<C> {
         };
         if DuracionSesion::debe_renovarse(sesion.ultimo_uso_en, ahora) {
             p.sesiones
-                .renovar(&mut cx, sesion.id, ahora, sesion.duracion.expira_en(ahora))
+                .renovar(
+                    &mut cx,
+                    sesion.id,
+                    ahora,
+                    sesion.duracion.vence_en(ahora, sesion.creada_en),
+                )
                 .await?;
         }
         p.transacciones.confirmar(cx).await?;

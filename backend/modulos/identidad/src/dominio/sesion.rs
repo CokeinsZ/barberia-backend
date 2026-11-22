@@ -12,6 +12,10 @@ pub(crate) enum DuracionSesion {
 /// este tiempo.
 const RENOVAR_CADA: TimeDelta = TimeDelta::minutes(5);
 
+/// Vida máxima de una sesión desde que se inició, aunque se use todos los días: después hay
+/// que volver a escribir la contraseña (OWASP ASVS 3.3.2, nivel 1: 30 días).
+pub(crate) const VIDA_MAXIMA: TimeDelta = TimeDelta::days(30);
+
 impl DuracionSesion {
     pub(crate) fn desde_recordarme(recordarme: bool) -> Self {
         if recordarme { Self::Extendida } else { Self::Normal }
@@ -30,6 +34,12 @@ impl DuracionSesion {
 
     pub(crate) fn expira_en(self, ultimo_uso: DateTime<Utc>) -> DateTime<Utc> {
         ultimo_uso + self.inactividad_maxima()
+    }
+
+    /// Vencimiento al renovarla: la inactividad máxima desde este uso, sin pasar de la vida
+    /// máxima desde que se inició.
+    pub(crate) fn vence_en(self, ultimo_uso: DateTime<Utc>, creada_en: DateTime<Utc>) -> DateTime<Utc> {
+        self.expira_en(ultimo_uso).min(creada_en + VIDA_MAXIMA)
     }
 
     /// Duración de la cookie: de sesión del navegador, o 30 días con «Recordarme».

@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Diamante Barbería · API (fases 0 a 5)",
-    "description": "Pruebas manuales del backend: salud, identidad, negocio, auditoría, catálogo, barberos, archivos, agenda (landing, disponibilidad, reserva en línea, gestión por enlace y panel), verificación por WhatsApp, clientes, notificaciones (WhatsApp simulado, webhooks y avisos), trabajos y ventas.\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025; el WhatsApp simulado se lee en `GET /api/v1/_pruebas/mensajes`).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 28); cada petición tiene pruebas que dicen qué se espera.\n\nLas peticiones de carga de archivos (carpeta 13) piden elegir un archivo en la pestaña *Body*.\n\nLímites: 10 inicios de sesión por IP cada 15 minutos (las carpetas 01 a 20 usan exactamente 10; las 21 a 28, ocho) y 10 códigos de verificación por IP cada hora (las carpetas 17 a 20 usan 6). Antes de la carpeta 21, y para repetir el recorrido, reinicie los contadores con `docker compose restart api`. Las carpetas 01, 04 y 07 dependen de una base nueva (la primera administradora y Camila se crean una sola vez); las 09 a 27 se pueden repetir.\n\nLa carpeta 20 puede esperar hasta un minuto antes de pedir otro código (la espera entre códigos). La carpeta 28 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `barbero_id`, `comprobante`…) se llenan solas con los scripts de las peticiones.\n\nLas peticiones a la API tienen desactivado el almacén de cookies de Postman (*Settings → Disable cookie jar*): la sesión viaja solo en el encabezado `Cookie` con la variable de cada petición, así «sin sesión» es de verdad sin sesión.\n\nWebhooks de WhatsApp (carpeta 22): se firman con la variable `secreto_whatsapp` (`secreto-de-desarrollo-whatsapp` con `make dev`; en el stack E2E use `secreto-de-pruebas-whatsapp` y `token_webhook` = `token-de-pruebas`).",
+    "name": "Diamante Barbería · API (fases 0 a 6)",
+    "description": "Pruebas manuales del backend: salud, identidad, negocio, auditoría, catálogo, barberos, archivos, agenda (landing, disponibilidad, reserva en línea, gestión por enlace y panel), verificación por WhatsApp, clientes, notificaciones (WhatsApp simulado, webhooks y avisos), trabajos, ventas y reportes (dashboard, resumen, liquidación, clientes y PDF con Gotenberg).\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025; el WhatsApp simulado se lee en `GET /api/v1/_pruebas/mensajes`).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 29); cada petición tiene pruebas que dicen qué se espera.\n\nLas peticiones de carga de archivos (carpeta 13) piden elegir un archivo en la pestaña *Body*.\n\nLímites: 10 inicios de sesión por IP cada 15 minutos (las carpetas 01 a 20 usan exactamente 10; las 21 a 29, ocho) y 10 códigos de verificación por IP cada hora (las carpetas 17 a 20 usan 6). Antes de la carpeta 21, y para repetir el recorrido, reinicie los contadores con `docker compose restart api`. Las carpetas 01, 04 y 07 dependen de una base nueva (la primera administradora y Camila se crean una sola vez); las 09 a 28 se pueden repetir.\n\nLa carpeta 20 puede esperar hasta un minuto antes de pedir otro código (la espera entre códigos). La carpeta 29 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `barbero_id`, `comprobante`…) se llenan solas con los scripts de las peticiones.\n\nLas peticiones a la API tienen desactivado el almacén de cookies de Postman (*Settings → Disable cookie jar*): la sesión viaja solo en el encabezado `Cookie` con la variable de cada petición, así «sin sesión» es de verdad sin sesión.\n\nWebhooks de WhatsApp (carpeta 22): se firman con la variable `secreto_whatsapp` (`secreto-de-desarrollo-whatsapp` con `make dev`; en el stack E2E use `secreto-de-pruebas-whatsapp` y `token_webhook` = `token-de-pruebas`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -10579,8 +10579,711 @@
       ]
     },
     {
-      "name": "28 · Bloqueo y límites de intentos (al final: deja la cuenta bloqueada)",
-      "description": "**Ejecútela al final.** Si viene de la carpeta 27 sin reiniciar, el límite por IP alcanza para sus siete intentos (la carpeta 21 pidió reiniciar la API).\n\n- **Bloqueo de cuenta** (RNF-SEG-05): 5 contraseñas equivocadas seguidas bloquean la cuenta 15 minutos. Desde ahí ni la contraseña correcta funciona y el mensaje sigue siendo genérico; la auditoría registra `bloquear_cuenta`.\n- **Límite por IP**: el inicio de sesión número 11 en 15 minutos responde 429 con `Retry-After`.\n\nPara desbloquear la cuenta sin esperar:\n\n```sql\nUPDATE identidad.usuario SET bloqueado_hasta = NULL, intentos_fallidos = 0\nWHERE correo = 'laura@diamante.co';\n```",
+      "name": "28 · Reportes y dashboard",
+      "description": "RF-REP-01 a 06, RF-DAS-01 a 08 y RF-PBA-06 (E2E-REP-01 a 04) sobre lo que registraron las carpetas anteriores. Las pruebas no dependen de cifras fijas: comprueban que todo cuadra (por barbero, por método, por semana y por servicio contra los totales; el resumen de hoy contra la caja del día; la liquidación contra el detalle de cada venta) y los permisos.\n\nLos PDF los genera Gotenberg (incluido en Docker Compose); en Postman se ven en la pestaña *Body* («Save response → Save to a file»). Cada PDF queda en la auditoría. No usa inicios de sesión nuevos: reutiliza la sesión de la administradora y la de Esteban (carpeta 25).",
+      "item": [
+        {
+          "name": "Resumen del mes en curso (RF-REP-02)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json(), t = r.totales;",
+                  "const suma = (lista, campo) => lista.reduce((s, x) => s + x[campo], 0);",
+                  "pm.test('El mes en curso termina hoy', () => pm.expect(r.periodo.hasta).to.eql(pm.collectionVariables.get('hoy')));",
+                  "pm.test('Total cobrado = ventas netas + propinas', () => pm.expect(t.total_cobrado).to.eql(t.ventas_netas + t.propinas));",
+                  "pm.test('Ventas netas = subtotal − descuentos', () => pm.expect(t.ventas_netas).to.eql(t.subtotal - t.descuentos));",
+                  "pm.test('Por barbero cuadra con los totales', () => {",
+                  "  pm.expect(suma(r.por_barbero, 'ventas_netas')).to.eql(t.ventas_netas);",
+                  "  pm.expect(suma(r.por_barbero, 'comision')).to.eql(t.comisiones);",
+                  "  pm.expect(suma(r.por_barbero, 'propinas')).to.eql(t.propinas);",
+                  "  r.por_barbero.forEach(b => pm.expect(b.total_a_pagar).to.eql(b.comision + b.propinas));",
+                  "});",
+                  "pm.test('Por método de pago suma el total cobrado', () => pm.expect(suma(r.por_metodo, 'total')).to.eql(t.total_cobrado));",
+                  "pm.test('Por semana suma las ventas netas', () => pm.expect(suma(r.por_semana, 'ventas_netas')).to.eql(t.ventas_netas));",
+                  "pm.test('Por servicio suma los servicios', () => pm.expect(suma(r.por_servicio, 'unidades')).to.eql(t.servicios));",
+                  "pm.test('Ticket promedio = netas ÷ clientes', () => pm.expect(t.ticket_promedio).to.eql(t.clientes_atendidos ? Math.round(t.ventas_netas / t.clientes_atendidos) : null));",
+                  "pm.collectionVariables.set('resumen_por_servicio', JSON.stringify(r.por_servicio));",
+                  "pm.collectionVariables.set('liquidacion_esteban', JSON.stringify(r.por_barbero.find(b => b.barbero_id == pm.collectionVariables.get('barbero5_id')) || null));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resumen de hoy (rango de un día)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen?desde={{hoy}}&hasta={{hoy}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Periodo de un día', () => pm.expect(r.periodo.dias).to.eql(1));",
+                  "pm.collectionVariables.set('totales_hoy', JSON.stringify(r.totales));",
+                  "pm.collectionVariables.set('metodos_hoy', JSON.stringify(r.por_metodo.map(m => m.total).sort((a, b) => a - b)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "La caja del día coincide con el resumen de hoy",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas/caja"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const c = pm.response.json(), t = JSON.parse(pm.collectionVariables.get('totales_hoy'));",
+                  "pm.test('Mismas ventas, netas, propinas y total', () => pm.expect([c.numero_ventas, c.venta_neta, c.propinas, c.total_cobrado]).to.eql([t.clientes_atendidos, t.ventas_netas, t.propinas, t.total_cobrado]));",
+                  "pm.test('Mismo desglose por método', () => pm.expect(JSON.stringify(c.por_metodo.map(m => m.total).filter(x => x > 0).sort((a, b) => a - b))).to.eql(pm.collectionVariables.get('metodos_hoy')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dashboard de hoy (E2E-REP-01)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/dashboard"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json(), t = JSON.parse(pm.collectionVariables.get('totales_hoy'));",
+                  "const suma = (lista, campo) => lista.reduce((s, x) => s + x[campo], 0);",
+                  "pm.test('Es de hoy', () => pm.expect(d.fecha).to.eql(pm.collectionVariables.get('hoy')));",
+                  "pm.test('Los indicadores coinciden con el resumen de hoy', () => pm.expect(d.hoy).to.eql(t));",
+                  "pm.test('Los barberos suman el día', () => pm.expect(suma(d.barberos, 'ventas_netas')).to.eql(d.hoy.ventas_netas));",
+                  "pm.test('Tendencia de 12 días que termina hoy', () => {",
+                  "  pm.expect(d.tendencia).to.have.lengthOf(12);",
+                  "  pm.expect(d.tendencia[11]).to.eql({ fecha: d.fecha, ventas_netas: d.hoy.ventas_netas });",
+                  "});",
+                  "pm.test('Comparación con el mismo día de la semana anterior', () => pm.expect(d.comparacion.fecha).to.be.a('string'));",
+                  "pm.test('Citas por estado y próximas (máximo 10, en orden)', () => {",
+                  "  ['atendidas', 'en_curso', 'proximas', 'sin_cerrar', 'no_asistio', 'canceladas'].forEach(e => pm.expect(d.citas[e]).to.be.at.least(0));",
+                  "  pm.expect(d.proximas.length).to.be.at.most(Math.min(10, d.citas.proximas));",
+                  "  const inicios = d.proximas.map(c => Date.parse(c.inicio));",
+                  "  pm.expect(inicios).to.eql([...inicios].sort((a, b) => a - b));",
+                  "});",
+                  "pm.test('Ocupación entre 0 y 100 %', () => d.barberos.forEach(b => { if (b.ocupacion !== null) pm.expect(b.ocupacion).to.be.within(0, 100); }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dashboard de un día futuro → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/dashboard?fecha=2099-01-01"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Campo «fecha»', () => pm.expect(pm.response.json().errores[0].campo).to.eql('fecha'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tendencias del mes (RF-DAS-05 a 07)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/tendencias"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Doce meses, año actual y anterior', () => pm.expect(r.clientes_por_mes.map(m => m.mes)).to.eql([1,2,3,4,5,6,7,8,9,10,11,12]));",
+                  "pm.test('Por servicio igual al resumen', () => pm.expect(JSON.stringify(r.por_servicio)).to.eql(pm.collectionVariables.get('resumen_por_servicio')));",
+                  "pm.test('Horas pico válidas', () => r.horas_pico.forEach(h => { pm.expect(h.dia_semana).to.be.within(1, 7); pm.expect(h.hora).to.be.within(0, 23); }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alertas (RF-DAS-08)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/alertas"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const a = pm.response.json();",
+                  "pm.test('Trae cada alerta', () => pm.expect(a).to.have.all.keys('sin_confirmar_manana', 'cumpleanos', 'ausentes', 'por_reactivar', 'solicitudes_titular', 'avisos_no_leidos'));",
+                  "pm.test('Mañana: solo citas sin confirmar', () => a.sin_confirmar_manana.forEach(c => pm.expect(c.estado).to.eql('sin_confirmar')));",
+                  "pm.collectionVariables.set('avisos_no_leidos', a.avisos_no_leidos);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Los avisos sin leer coinciden con las alertas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/avisos?no_leidos=true&por_pagina=1"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Mismo número', () => pm.expect(pm.response.json().total).to.eql(Number(pm.collectionVariables.get('avisos_no_leidos'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clientes del mes (RF-REP-05)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/clientes"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json(), c = r.clientes;",
+                  "pm.test('Recurrentes = atendidos − nuevos', () => pm.expect(c.recurrentes).to.eql(c.atendidos - c.nuevos));",
+                  "pm.test('Porcentaje de retorno con un decimal', () => pm.expect(c.porcentaje_retorno).to.eql(c.atendidos ? Math.round(c.con_retorno * 1000 / c.atendidos) / 10 : null));",
+                  "pm.test('Lista para reactivar (hasta 100) con su total', () => {",
+                  "  pm.expect(r.por_reactivar.clientes.length).to.be.at.most(Math.min(100, r.por_reactivar.total));",
+                  "  r.por_reactivar.clientes.forEach(x => pm.expect(x.dias_sin_volver).to.be.above(r.por_reactivar.dias_inactividad));",
+                  "});",
+                  "pm.test('Los de más visitas, máximo 10', () => pm.expect(r.mas_visitas.length).to.be.at.most(10));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Liquidación de Esteban (E2E-REP-02)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/barberos/{{barbero5_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json(), l = r.liquidacion;",
+                  "const suma = (lista, campo) => lista.reduce((s, x) => s + x[campo], 0);",
+                  "pm.test('La comisión suma la de cada venta (con su porcentaje)', () => pm.expect(l.comision).to.eql(suma(r.ventas, 'comision')));",
+                  "pm.test('Propinas: todas, de cualquier método', () => pm.expect(l.propinas).to.eql(suma(r.ventas, 'propina')));",
+                  "pm.test('Ventas netas del detalle', () => pm.expect(l.ventas_netas).to.eql(suma(r.ventas, 'ventas_netas')));",
+                  "pm.test('Total a pagar = comisión + propinas', () => pm.expect(l.total_a_pagar).to.eql(l.comision + l.propinas));",
+                  "pm.test('Igual a su fila del resumen', () => { const f = JSON.parse(pm.collectionVariables.get('liquidacion_esteban')); if (f) pm.expect(l).to.eql(f); });",
+                  "pm.test('Con su vinculación y su comisión vigente', () => pm.expect(r.barbero.porcentaje_comision).to.be.a('number'));",
+                  "pm.collectionVariables.set('liquidacion_esteban', JSON.stringify(l));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban ve su reporte en «Mi reporte» (E2E-REP-04)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/barberos/{{barbero5_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('La misma liquidación', () => pm.expect(JSON.stringify(pm.response.json().liquidacion)).to.eql(pm.collectionVariables.get('liquidacion_esteban')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban pide el reporte de Daniel → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/barberos/{{barbero3_id}}"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404: lo ajeno no existe para él', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban pide el resumen de la barbería → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Esteban descarga su reporte en PDF",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/barberos/{{barbero5_id}}.pdf"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Es un PDF', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.eql('application/pdf');",
+                  "  pm.expect(pm.response.text().startsWith('%PDF')).to.be.true;",
+                  "});",
+                  "pm.test('Se descarga como adjunto y no se guarda en caché', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/^attachment; filename=\".+\\.pdf\"$/);",
+                  "  pm.expect(pm.response.headers.get('Cache-Control')).to.eql('private, no-store');",
+                  "});",
+                  "pm.test('Nombre con su id', () => pm.expect(pm.response.headers.get('Content-Disposition')).to.include('barbero-' + pm.collectionVariables.get('barbero5_id') + '-'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resumen en PDF (E2E-REP-03)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen.pdf"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Es un PDF', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.eql('application/pdf');",
+                  "  pm.expect(pm.response.text().startsWith('%PDF')).to.be.true;",
+                  "});",
+                  "pm.test('Se descarga como adjunto y no se guarda en caché', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/^attachment; filename=\".+\\.pdf\"$/);",
+                  "  pm.expect(pm.response.headers.get('Cache-Control')).to.eql('private, no-store');",
+                  "});",
+                  "pm.test('Nombre con el mes', () => pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/filename=\"resumen-\\d{4}-\\d{2}\\.pdf\"/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Todos los barberos en un PDF (RF-REP-04)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/barberos.pdf"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Es un PDF', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.eql('application/pdf');",
+                  "  pm.expect(pm.response.text().startsWith('%PDF')).to.be.true;",
+                  "});",
+                  "pm.test('Se descarga como adjunto y no se guarda en caché', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/^attachment; filename=\".+\\.pdf\"$/);",
+                  "  pm.expect(pm.response.headers.get('Cache-Control')).to.eql('private, no-store');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clientes en PDF",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/clientes.pdf"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Es un PDF', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.eql('application/pdf');",
+                  "  pm.expect(pm.response.text().startsWith('%PDF')).to.be.true;",
+                  "});",
+                  "pm.test('Se descarga como adjunto y no se guarda en caché', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/^attachment; filename=\".+\\.pdf\"$/);",
+                  "  pm.expect(pm.response.headers.get('Cache-Control')).to.eql('private, no-store');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Las descargas quedan en la auditoría (RF-SIS-07)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?entidad=reporte"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Al menos las 4 de esta carpeta', () => pm.expect(r.total).to.be.at.least(4));",
+                  "pm.test('Acción exportar_reporte', () => pm.expect(r.datos[0].accion).to.eql('exportar_reporte'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mes futuro → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen?mes=2099-01"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Campo «mes»', () => pm.expect(pm.response.json().errores[0].campo).to.eql('mes'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rango que termina después de hoy → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen?desde={{hoy}}&hasta=2099-12-31"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Campo «hasta»', () => pm.expect(pm.response.json().errores[0].campo).to.eql('hasta'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Parámetro desconocido → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/reportes/resumen?formato=xlsx"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sin sesión → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/reportes/dashboard"
+          },
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "29 · Bloqueo y límites de intentos (al final: deja la cuenta bloqueada)",
+      "description": "**Ejecútela al final.** Si viene de la carpeta 28 sin reiniciar, el límite por IP alcanza para sus siete intentos (la carpeta 21 pidió reiniciar la API).\n\n- **Bloqueo de cuenta** (RNF-SEG-05): 5 contraseñas equivocadas seguidas bloquean la cuenta 15 minutos. Desde ahí ni la contraseña correcta funciona y el mensaje sigue siendo genérico; la auditoría registra `bloquear_cuenta`.\n- **Límite por IP**: el inicio de sesión número 11 en 15 minutos responde 429 con `Retry-After`.\n\nPara desbloquear la cuenta sin esperar:\n\n```sql\nUPDATE identidad.usuario SET bloqueado_hasta = NULL, intentos_fallidos = 0\nWHERE correo = 'laura@diamante.co';\n```",
       "item": [
         {
           "name": "Contraseña equivocada 1/5",
@@ -11387,6 +12090,26 @@
     },
     {
       "key": "solicitud_id",
+      "value": ""
+    },
+    {
+      "key": "resumen_por_servicio",
+      "value": ""
+    },
+    {
+      "key": "liquidacion_esteban",
+      "value": ""
+    },
+    {
+      "key": "totales_hoy",
+      "value": ""
+    },
+    {
+      "key": "metodos_hoy",
+      "value": ""
+    },
+    {
+      "key": "avisos_no_leidos",
       "value": ""
     }
   ]

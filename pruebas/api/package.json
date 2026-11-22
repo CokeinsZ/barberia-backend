@@ -1,0 +1,12 @@
+{
+  "name": "diamante-pruebas-api",
+  "private": true,
+  "description": "Corre la colección de Postman contra el ambiente E2E con newman.",
+  "type": "module",
+  "scripts": {
+    "coleccion": "node correr.mjs"
+  },
+  "devDependencies": {
+    "newman": "6.2.1"
+  }
+}

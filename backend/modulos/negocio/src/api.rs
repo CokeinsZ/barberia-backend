@@ -28,6 +28,16 @@ pub trait CalendarioNegocio<C: Send>: Send + Sync + std::fmt::Debug {
 pub trait ParametrosNegocio<C: Send>: Send + Sync + std::fmt::Debug {
     /// Comisión por defecto para un barbero nuevo (RF-BAR-04).
     async fn comision_por_defecto(&self, cx: &mut C) -> Result<Porcentaje, ErrorNegocio>;
+
+    /// Nombre comercial y NIT para el encabezado y el pie de los reportes en PDF (RF-REP-06).
+    async fn identificacion(&self, cx: &mut C) -> Result<IdentificacionNegocio, ErrorNegocio>;
+}
+
+/// Identificación del negocio en los documentos internos (no se publica en el sitio).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentificacionNegocio {
+    pub nombre_comercial: String,
+    pub nit: Option<String>,
 }
 
 /// Datos del negocio que se muestran en el sitio público (sin NIT ni comisión).

@@ -121,6 +121,13 @@ impl Avisos<UnidadDeTrabajo> for BuzonPg {
     async fn crear(&self, uow: &mut UnidadDeTrabajo, aviso: NuevoAviso) -> Result<i64, ErrorPersistencia> {
         insertar_aviso(uow.conexion(), &aviso, self.reloj.ahora()).await
     }
+
+    async fn no_leidos(&self, uow: &mut UnidadDeTrabajo) -> Result<i64, ErrorPersistencia> {
+        sqlx::query_scalar("SELECT count(*) FROM notificaciones.aviso WHERE leido_en IS NULL")
+            .fetch_one(uow.conexion())
+            .await
+            .map_err(a_error_persistencia)
+    }
 }
 
 #[derive(sqlx::FromRow)]

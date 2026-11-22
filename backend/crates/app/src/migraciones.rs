@@ -105,7 +105,9 @@ mod pruebas {
                 "trabajos",
                 // Fase 4: propósitos nuevos de los mensajes de una cita (va al final porque
                 // las migraciones se ordenan por versión).
-                "agenda"
+                "agenda",
+                // Fase 6: vistas publicadas para `reportes` (líneas y pagos de las ventas).
+                "ventas"
             ]
         );
     }

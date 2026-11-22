@@ -42,7 +42,11 @@ pub async fn conectar(url: &Secreto, max_conexiones: u32) -> Result<PgPool, sqlx
 pub fn a_error_persistencia(error: sqlx::Error) -> ErrorPersistencia {
     if let sqlx::Error::Database(ref db) = error {
         let restriccion = db.constraint().unwrap_or_default().to_owned();
-        let es_exclusion = db.code().as_deref() == Some("23P01");
+        let codigo = db.code();
+        if matches!(codigo.as_deref(), Some("40P01" | "40001")) {
+            return ErrorPersistencia::Concurrencia;
+        }
+        let es_exclusion = codigo.as_deref() == Some("23P01");
         match db.kind() {
             ErrorKind::UniqueViolation => return ErrorPersistencia::Duplicado { restriccion },
             ErrorKind::CheckViolation | ErrorKind::ForeignKeyViolation | ErrorKind::NotNullViolation => {

@@ -103,6 +103,10 @@ pub enum ErrorPersistencia {
     /// Violación de una restricción `CHECK` o de una llave foránea.
     #[error("Un dato viola la restricción «{restriccion}».")]
     Restriccion { restriccion: String },
+    /// La base abortó la transacción por chocar con otra simultánea: bloqueo mutuo (`40P01`)
+    /// o fallo de serialización (`40001`). Repetirla en una transacción nueva es seguro.
+    #[error("La operación chocó con otra simultánea.")]
+    Concurrencia,
     #[error("Error de la base de datos: {0}")]
     Otro(String),
 }
@@ -114,7 +118,7 @@ impl ErrorPersistencia {
             ErrorPersistencia::Duplicado { restriccion }
             | ErrorPersistencia::Conflicto { restriccion }
             | ErrorPersistencia::Restriccion { restriccion } => Some(restriccion),
-            ErrorPersistencia::Otro(_) => None,
+            ErrorPersistencia::Concurrencia | ErrorPersistencia::Otro(_) => None,
         }
     }
 }

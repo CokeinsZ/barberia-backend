@@ -8,6 +8,7 @@ use nucleo::identificadores::IdBarbero;
 use nucleo::{ErrorPersistencia, TipoActor};
 use plataforma::seguridad::huella_token;
 
+use super::concurrencia::con_reintentos;
 use super::dto::GestionCitaDto;
 use super::errores::ErrorAgenda;
 use super::puertos::{
@@ -93,6 +94,15 @@ impl<C: Send + 'static> Gestion<C> {
 
     /// Reprograma hasta la hora de inicio, con las mismas reglas de disponibilidad (RF-RES-15).
     pub(crate) async fn reprogramar(
+        &self,
+        token: &str,
+        inicio: DateTime<FixedOffset>,
+        barbero: Option<IdBarbero>,
+    ) -> Result<GestionCitaDto, ErrorAgenda> {
+        con_reintentos(|| self.intentar_reprogramar(token, inicio, barbero)).await
+    }
+
+    async fn intentar_reprogramar(
         &self,
         token: &str,
         inicio: DateTime<FixedOffset>,

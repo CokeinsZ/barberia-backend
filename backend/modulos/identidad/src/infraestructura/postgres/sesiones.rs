@@ -16,6 +16,7 @@ pub(crate) struct RepositorioSesionesPg;
 struct FilaSesion {
     id: i64,
     recordarme: bool,
+    creada_en: DateTime<Utc>,
     ultimo_uso_en: DateTime<Utc>,
     #[sqlx(flatten)]
     usuario: FilaUsuario,
@@ -49,7 +50,7 @@ impl RepositorioSesiones<UnidadDeTrabajo> for RepositorioSesionesPg {
         ahora: DateTime<Utc>,
     ) -> Result<Option<SesionVigente>, ErrorPersistencia> {
         let consulta = format!(
-            "SELECT s.id, s.recordarme, s.ultimo_uso_en, {COLUMNAS_USUARIO}
+            "SELECT s.id, s.recordarme, s.creada_en, s.ultimo_uso_en, {COLUMNAS_USUARIO}
              FROM identidad.sesion s
              JOIN identidad.usuario u ON u.id = s.usuario_id
              LEFT JOIN identidad.administrador a ON a.usuario_id = u.id
@@ -67,6 +68,7 @@ impl RepositorioSesiones<UnidadDeTrabajo> for RepositorioSesionesPg {
                 id: f.id,
                 usuario: f.usuario.a_dominio()?,
                 duracion: DuracionSesion::desde_recordarme(f.recordarme),
+                creada_en: f.creada_en,
                 ultimo_uso_en: f.ultimo_uso_en,
             })
         })

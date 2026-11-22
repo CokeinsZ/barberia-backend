@@ -1,12 +1,32 @@
 [package]
 name = "reportes"
-description = "Dashboard, reportes, liquidaciones, PDF y Excel."
+description = "Dashboard, reportes, liquidaciones y PDF (solo lectura sobre las vistas publicadas)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+auditoria.workspace = true
+axum.workspace = true
+barberos.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+clientes.workspace = true
+negocio.workspace = true
+notificaciones.workspace = true
+nucleo.workspace = true
+plataforma.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,51 @@
+# Proxy de producción (plan 7.3). HTTPS automático (Let's Encrypt; con DOMINIO=localhost,
+# certificado de la CA interna de Caddy), compresión, cabeceras de seguridad, la API en /api,
+# las fotos públicas directo del volumen y lo demás al frontend.
+#
+# Sin logs de acceso a propósito: las URL llevan tokens de los enlaces de gestión de citas y
+# búsquedas con nombres o celulares. La API registra cada petición con la plantilla de su ruta.
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	# Ninguna petición necesita más (documentos de 10 MB, fotos de 5 MB; la API pone sus límites).
+	request_body {
+		max_size 12MB
+	}
+
+	# La API toma la IP del cliente del último valor de X-Forwarded-For, el que pone Caddy
+	# (DIAMANTE_CONFIAR_PROXY=true): un X-Forwarded-For falso del cliente no la cambia.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	# Solo la carpeta publico/ del volumen (las rutas con .. se limpian antes); sin listados.
+	handle_path /media/publico/* {
+		root * /srv/media/publico
+		file_server
+		header Cache-Control "public, max-age=86400"
+	}
+
+	# El resto de /media (los documentos privados) nunca se sirve desde aquí.
+	handle /media/* {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy frontend:4321
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+		-Via
+	}
+
+	handle_errors 502 503 504 {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "Diamante Barbería no está disponible en este momento. Intenta de nuevo en unos minutos." {err.status_code}
+	}
+}

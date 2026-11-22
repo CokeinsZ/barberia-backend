@@ -10,6 +10,7 @@ use nucleo::identificadores::{IdBarbero, IdCita, IdCliente, IdServicio};
 use nucleo::{Actor, ErrorPersistencia, ZONA_HORARIA};
 use plataforma::seguridad::generar_token;
 
+use super::concurrencia::con_reintentos;
 use super::dto::{CitaDto, ColumnaTableroDto, DetalleCitaDto, RangoHorasDto, RangoInstantesDto, TableroDto};
 use super::errores::ErrorAgenda;
 use super::puertos::{
@@ -246,6 +247,14 @@ impl<C: Send + 'static> Panel<C> {
         actor: &Actor,
         s: SolicitudCitaPanel,
     ) -> Result<DetalleCitaDto, ErrorAgenda> {
+        con_reintentos(|| self.intentar_crear(actor, s.clone())).await
+    }
+
+    async fn intentar_crear(
+        &self,
+        actor: &Actor,
+        s: SolicitudCitaPanel,
+    ) -> Result<DetalleCitaDto, ErrorAgenda> {
         solo_administrador(actor)?;
         let nota = s.nota.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
         if nota.as_ref().is_some_and(|n| n.chars().count() > 500) {
@@ -329,6 +338,16 @@ impl<C: Send + 'static> Panel<C> {
     /// Reprograma a otra fecha, hora o barbero, respetando la disponibilidad (RF-AGE-06). El
     /// cliente recibe el aviso con un enlace nuevo (el anterior deja de servir).
     pub(crate) async fn reprogramar(
+        &self,
+        actor: &Actor,
+        id: IdCita,
+        inicio: DateTime<FixedOffset>,
+        barbero: Option<IdBarbero>,
+    ) -> Result<DetalleCitaDto, ErrorAgenda> {
+        con_reintentos(|| self.intentar_reprogramar(actor, id, inicio, barbero)).await
+    }
+
+    async fn intentar_reprogramar(
         &self,
         actor: &Actor,
         id: IdCita,
