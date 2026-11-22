@@ -91,10 +91,10 @@ impl<C: Send> BuscarClientes<C> {
             .buscar(
                 &mut cx,
                 Some(texto),
-                SolicitudPagina {
+                Some(SolicitudPagina {
                     pagina: 1,
                     por_pagina: 8,
-                },
+                }),
             )
             .await?;
         p.transacciones.confirmar(cx).await?;
@@ -135,17 +135,7 @@ impl<C: Send> ListarClientes<C> {
         let resultado = match segmento_buscado.as_deref().filter(|s| !s.is_empty()) {
             // El segmento se calcula: con filtro se recorre la base filtrada y se pagina aquí.
             Some(buscado) => {
-                let (todos, _) = p
-                    .clientes
-                    .buscar(
-                        &mut cx,
-                        texto,
-                        SolicitudPagina {
-                            pagina: 1,
-                            por_pagina: 100_000,
-                        },
-                    )
-                    .await?;
+                let (todos, _) = p.clientes.buscar(&mut cx, texto, None).await?;
                 let filtrados: Vec<ClienteListadoDto> = todos
                     .iter()
                     .map(|g| listado(g, hoy, u))
@@ -160,7 +150,7 @@ impl<C: Send> ListarClientes<C> {
                 Pagina::nueva(datos, pagina, total)
             }
             None => {
-                let (clientes, total) = p.clientes.buscar(&mut cx, texto, pagina).await?;
+                let (clientes, total) = p.clientes.buscar(&mut cx, texto, Some(pagina)).await?;
                 Pagina::nueva(
                     clientes.iter().map(|g| listado(g, hoy, u)).collect(),
                     pagina,

@@ -331,7 +331,7 @@ impl<C: Send + 'static> Ventas<C> {
         }
         let p = &self.p;
         let mut cx = p.transacciones.iniciar().await?;
-        let (ventas, total) = p.ventas.listar(&mut cx, &filtro, pagina).await?;
+        let (ventas, total) = p.ventas.listar(&mut cx, &filtro, Some(pagina)).await?;
         let dtos = self.dtos(&mut cx, ventas).await?;
         p.transacciones.confirmar(cx).await?;
         Ok(Pagina::nueva(dtos, pagina, total))

@@ -287,7 +287,7 @@ impl RepositorioVentas<UnidadDeTrabajo> for RepositorioVentasPg {
         &self,
         uow: &mut UnidadDeTrabajo,
         f: &FiltroVentas,
-        pagina: SolicitudPagina,
+        pagina: Option<SolicitudPagina>,
     ) -> Result<(Vec<VentaGuardada>, i64), ErrorPersistencia> {
         const CONDICION: &str = "($1::date IS NULL OR fecha_operacion >= $1)
              AND ($2::date IS NULL OR fecha_operacion <= $2)
@@ -303,8 +303,9 @@ impl RepositorioVentas<UnidadDeTrabajo> for RepositorioVentasPg {
         .bind(f.barbero.map(|b| b.0))
         .bind(f.cliente.map(|c| c.0))
         .bind(f.solo_registradas)
-        .bind(pagina.limite())
-        .bind(pagina.desplazamiento())
+        // `LIMIT NULL` es «sin límite».
+        .bind(pagina.map(SolicitudPagina::limite))
+        .bind(pagina.map_or(0, SolicitudPagina::desplazamiento))
         .fetch_all(uow.conexion())
         .await
         .map_err(a_error_persistencia)?;

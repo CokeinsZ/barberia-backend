@@ -137,11 +137,13 @@ pub(crate) trait RepositorioVentas<C: Send>: Send + Sync + fmt::Debug {
         id: IdVenta,
         bloquear: bool,
     ) -> Result<Option<VentaGuardada>, ErrorPersistencia>;
+    /// Con `pagina = None` trae todas (la caja del día suma cada venta: no puede cortarse en
+    /// una página).
     async fn listar(
         &self,
         cx: &mut C,
         filtro: &FiltroVentas,
-        pagina: SolicitudPagina,
+        pagina: Option<SolicitudPagina>,
     ) -> Result<(Vec<VentaGuardada>, i64), ErrorPersistencia>;
     async fn anular(
         &self,

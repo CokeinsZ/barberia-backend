@@ -58,12 +58,13 @@ pub(crate) trait RepositorioClientes<C: Send>: Send + Sync + fmt::Debug {
         id: IdCliente,
         activos: bool,
     ) -> Result<(), ErrorPersistencia>;
-    /// Búsqueda por nombre (sin tildes), celular o correo; los más recientes primero.
+    /// Búsqueda por nombre (sin tildes), celular o correo; los más recientes primero. Con
+    /// `pagina = None` trae todos (el segmento se calcula después y se pagina en memoria).
     async fn buscar(
         &self,
         cx: &mut C,
         texto: Option<&str>,
-        pagina: SolicitudPagina,
+        pagina: Option<SolicitudPagina>,
     ) -> Result<(Vec<ClienteGuardado>, i64), ErrorPersistencia>;
     async fn autorizaciones(
         &self,

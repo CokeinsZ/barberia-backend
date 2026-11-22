@@ -6,7 +6,7 @@ use std::sync::Arc;
 use auditoria::api::EntradaAuditoria;
 use chrono::NaiveDate;
 use nucleo::identificadores::IdBarbero;
-use nucleo::{Actor, Dinero, ErrorPersistencia, SolicitudPagina, ZONA_HORARIA};
+use nucleo::{Actor, Dinero, ErrorPersistencia, ZONA_HORARIA};
 use serde_json::json;
 
 use super::dto::{
@@ -15,12 +15,6 @@ use super::dto::{
 use super::errores::ErrorVentas;
 use super::puertos::{CierreGuardado, FiltroVentas, MetodoPago, NuevoCierre, Puertos, RESTRICCION_CIERRE};
 use super::ventas::{Ventas, metodo_dto, solo_administrador};
-
-/// Ventas de un día: caben en una página (una barbería no hace 500 ventas al día).
-const TODAS_DEL_DIA: SolicitudPagina = SolicitudPagina {
-    pagina: 1,
-    por_pagina: SolicitudPagina::MAXIMO_POR_PAGINA,
-};
 
 fn sumar(valores: impl Iterator<Item = Dinero>) -> Dinero {
     valores.fold(Dinero::CERO, |suma, v| suma.sumar(v).unwrap_or(suma))
@@ -65,7 +59,7 @@ impl<C: Send + 'static> Caja<C> {
             hasta: Some(fecha),
             ..Default::default()
         };
-        let (todas, _) = p.ventas.listar(&mut cx, &filtro, TODAS_DEL_DIA).await?;
+        let (todas, _) = p.ventas.listar(&mut cx, &filtro, None).await?;
         let cobrado = p.ventas.cobrado_por_metodo(&mut cx, fecha).await?;
         let metodos = p.ventas.metodos_pago(&mut cx).await?;
         let dtos = self.ventas.dtos(&mut cx, todas).await?;
@@ -128,7 +122,7 @@ impl<C: Send + 'static> Caja<C> {
             solo_registradas: true,
             ..Default::default()
         };
-        let (ventas, _) = p.ventas.listar(&mut cx, &filtro, TODAS_DEL_DIA).await?;
+        let (ventas, _) = p.ventas.listar(&mut cx, &filtro, None).await?;
         let nombre = p
             .equipo
             .nombres(&mut cx, &[barbero])

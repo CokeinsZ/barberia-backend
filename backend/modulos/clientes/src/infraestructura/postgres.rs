@@ -195,7 +195,7 @@ impl RepositorioClientes<UnidadDeTrabajo> for RepositorioClientesPg {
         &self,
         uow: &mut UnidadDeTrabajo,
         texto: Option<&str>,
-        pagina: SolicitudPagina,
+        pagina: Option<SolicitudPagina>,
     ) -> Result<(Vec<ClienteGuardado>, i64), ErrorPersistencia> {
         // `strpos` y no `LIKE`: así un `%` o un `_` escrito por la persona no es un comodín.
         let consulta = format!(
@@ -209,8 +209,9 @@ impl RepositorioClientes<UnidadDeTrabajo> for RepositorioClientesPg {
         );
         let filas: Vec<Fila> = sqlx::query_as(sqlx::AssertSqlSafe(consulta))
             .bind(texto)
-            .bind(pagina.limite())
-            .bind(pagina.desplazamiento())
+            // `LIMIT NULL` es «sin límite».
+            .bind(pagina.map(SolicitudPagina::limite))
+            .bind(pagina.map_or(0, SolicitudPagina::desplazamiento))
             .fetch_all(uow.conexion())
             .await
             .map_err(a_error_persistencia)?;

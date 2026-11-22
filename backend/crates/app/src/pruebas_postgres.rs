@@ -2937,3 +2937,210 @@ async fn ventas_caja_y_clientes_de_punta_a_punta() {
     );
     base.eliminar().await;
 }
+
+/// La caja, «Lo que llevas hoy» y el filtro por segmento recorren todas las filas: un día con
+/// más de 100 ventas o una base con más de 100 clientes no se corta en una página. Lo encontró
+/// la batería de preproducción: la caja sumaba solo las 100 ventas más recientes del día y su
+/// desglose por método ya no cuadraba con el total.
+#[tokio::test]
+async fn la_caja_y_los_segmentos_no_se_cortan_en_una_pagina() {
+    let base = BaseDePrueba::crear(&migraciones::origenes()).await;
+    let configuracion = Configuracion::desde(|clave| match clave {
+        "DATABASE_URL" => Some("postgres://sin-uso".into()),
+        "DIAMANTE_URL_PUBLICA" => Some(SITIO.into()),
+        "DIAMANTE_PRUEBAS_E2E" => Some("true".into()),
+        _ => None,
+    })
+    .unwrap();
+    let composicion = Composicion::con_reloj_de_pruebas(
+        base.pool.clone(),
+        Arc::new(nucleo::RelojDePruebas::default()),
+        &configuracion,
+    )
+    .unwrap();
+    let app = enrutador::construir(&composicion);
+    mover_reloj(&app, "2026-11-18T10:00:00-05:00").await;
+    composicion
+        .identidad
+        .invitar_administrador(&Actor::Sistema, "laura@diamante.co", "Laura Gómez")
+        .await
+        .unwrap();
+    let token = token_del_correo(&base, "laura@diamante.co").await;
+    pedir(
+        &app,
+        Method::POST,
+        "/api/v1/auth/activacion",
+        None,
+        Some(json!({ "token": token, "contrasena": CLAVE })),
+    )
+    .await;
+    let (_, admin) = entrar(&app, "laura@diamante.co").await;
+    let corte = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/servicios",
+        Some(&admin),
+        Some(json!({ "categoria_id": 1, "nombre": "Corte", "descripcion": "Corte.", "precio": 35_000, "duracion_min": 30 })),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let santiago = pedir(
+        &app,
+        Method::POST,
+        "/api/v1/barberos",
+        Some(&admin),
+        Some(registro(
+            "Santiago",
+            "1020304050",
+            "santiago@diamante.co",
+            vec![json!(corte)],
+        )),
+    )
+    .await
+    .json["id"]
+        .as_i64()
+        .unwrap();
+    let r = pedir(&app, Method::GET, "/api/v1/ventas/catalogos", Some(&admin), None).await;
+    let efectivo = r.json["metodos_pago"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["codigo"] == "efectivo")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+
+    // 105 ventas del día (propina de 1.000) y se anulan las 3 primeras: las más antiguas
+    // quedaban fuera de la primera página.
+    const VENTAS: i64 = 105;
+    const ANULADAS: i64 = 3;
+    let mut ids = Vec::new();
+    for _ in 0..VENTAS {
+        let r = pedir(
+            &app,
+            Method::POST,
+            "/api/v1/ventas",
+            Some(&admin),
+            Some(json!({ "cliente": { "tipo": "ocasional" }, "barbero_id": santiago, "servicio_ids": [corte], "propina": 1000,
+                         "pagos": [{ "metodo_pago_id": efectivo, "monto": 36_000 }] })),
+        )
+        .await;
+        assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+        ids.push(r.json["id"].as_i64().unwrap());
+    }
+    for id in &ids[..3] {
+        let r = pedir(
+            &app,
+            Method::POST,
+            &format!("/api/v1/ventas/{id}/anulacion"),
+            Some(&admin),
+            Some(json!({ "motivo": "Prueba de volumen" })),
+        )
+        .await;
+        assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    }
+    let vigentes = VENTAS - ANULADAS;
+
+    let caja = pedir(&app, Method::GET, "/api/v1/ventas/caja", Some(&admin), None)
+        .await
+        .json;
+    assert_eq!(caja["numero_ventas"], vigentes, "{caja}");
+    assert_eq!(caja["anuladas"], ANULADAS);
+    assert_eq!(caja["venta_neta"], vigentes * 35_000);
+    assert_eq!(caja["propinas"], vigentes * 1000);
+    assert_eq!(caja["total_cobrado"], vigentes * 36_000);
+    let por_metodo: i64 = caja["por_metodo"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["total"].as_i64().unwrap())
+        .sum();
+    assert_eq!(por_metodo, vigentes * 36_000, "el desglose cuadra con el total");
+    assert_eq!(caja["ventas"].as_array().unwrap().len(), 105);
+
+    let r = pedir(
+        &app,
+        Method::GET,
+        &format!("/api/v1/ventas/resumen-barbero?barbero_id={santiago}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["numero_ventas"], vigentes, "{}", r.json);
+    assert_eq!(r.json["propinas"], vigentes * 1000);
+
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/reportes/resumen?desde=2026-11-18&hasta=2026-11-18",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["totales"]["clientes_atendidos"], caja["numero_ventas"]);
+    assert_eq!(r.json["totales"]["total_cobrado"], caja["total_cobrado"]);
+
+    // El listado sí se pagina (máximo 100 por página).
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/ventas?fecha=2026-11-18&por_pagina=500",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        r.json["datos"].as_array().unwrap().len(),
+        100,
+        "{}",
+        r.json["total"]
+    );
+    assert_eq!(r.json["total"], vigentes, "sin las anuladas");
+
+    // 105 clientes sin visitas: el filtro por segmento los encuentra a todos, también al más
+    // antiguo, que no está entre los 100 más recientes.
+    let mut primero = None;
+    for i in 0..105 {
+        let r = pedir(
+            &app,
+            Method::POST,
+            "/api/v1/clientes",
+            Some(&admin),
+            Some(json!({ "nombre": format!("Cliente {i}"), "celular": format!("31{i:08}") })),
+        )
+        .await;
+        assert_eq!(r.estado, StatusCode::CREATED, "{}", r.json);
+        primero.get_or_insert(r.json["id"].as_i64().unwrap());
+    }
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/clientes?segmento=sin_visitas&por_pagina=100&pagina=2",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.estado, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json["total"], 105, "{}", r.json);
+    let pagina_2: Vec<i64> = r.json["datos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(pagina_2.len(), 5);
+    assert!(pagina_2.contains(&primero.unwrap()), "{pagina_2:?}");
+    let r = pedir(
+        &app,
+        Method::GET,
+        "/api/v1/clientes?por_pagina=100",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["datos"].as_array().unwrap().len(), 100);
+    assert_eq!(r.json["total"], 105);
+    base.eliminar().await;
+}
