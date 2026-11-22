@@ -62,7 +62,7 @@ tamaño). Estas rutas tienen 120 s de tiempo máximo (el resto de la API, 30 s).
 - `citas`: atendidas, en curso, próximas (sin confirmar o confirmadas que no han empezado), sin
   cerrar (ya pasó su hora y no tienen venta ni inasistencia), no asistió y canceladas; y las
   próximas 10 con hora, cliente, servicio y barbero.
-- `barberos`: por barbero, estado (`activo` o el tipo de ausencia), clientes, servicios, ventas
+- `barberos`: por barbero, estado (`activo`, el tipo de ausencia o `retirado` si vendió ese día y ya no está en el equipo: la tabla siempre suma el total del día), clientes, servicios, ventas
   netas, propinas y **ocupación** = minutos con citas (sin confirmar, confirmadas, en curso o
   atendidas) ÷ minutos de sus franjas del día, descontando bloqueos; los festivos usan las
   franjas del domingo, los días cerrados no tienen franjas y el cierre temprano las recorta (las

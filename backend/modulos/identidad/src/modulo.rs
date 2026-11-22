@@ -87,6 +87,12 @@ impl ModuloIdentidad {
         Arc::new(ValidadorIdentidad(self.casos.validar_sesion.clone()))
     }
 
+    /// Enlace de activación (cuenta sin activar) o de restablecimiento (activada), sin correo.
+    /// Lo usa la línea de comandos (`diamante enlace-acceso`).
+    pub async fn enlace_de_acceso(&self, correo: &str) -> Result<String, ErrorIdentidad> {
+        self.casos.emitir_enlace_de_acceso.ejecutar(correo).await
+    }
+
     /// Invitación de un administrador. La usa la línea de comandos (`diamante
     /// crear-administrador`) con el actor `Sistema` para el primer administrador.
     pub async fn invitar_administrador(

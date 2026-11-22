@@ -13,3 +13,5 @@ e2e/playwright-report/
 
 pruebas/rendimiento/base.json
 pruebas/rendimiento/resultados.json
+pruebas/preproduccion/.credenciales.json
+pruebas/preproduccion/resultados/

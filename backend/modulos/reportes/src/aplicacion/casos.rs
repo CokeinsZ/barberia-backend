@@ -351,12 +351,9 @@ impl<C: Send + 'static> Reportes<C> {
             .await?;
         let equipo = p.equipo.equipo(&mut cx, fecha, fecha).await?;
         let especiales = p.calendario.dias_especiales(&mut cx, fecha, fecha).await?;
-        let por_barbero: HashMap<i64, Sumas> = l
-            .por_barbero(&mut cx, fecha, fecha)
-            .await?
-            .into_iter()
-            .map(|f| (f.barbero_id, f.sumas))
-            .collect();
+        let filas_del_dia = l.por_barbero(&mut cx, fecha, fecha).await?;
+        let por_barbero: HashMap<i64, Sumas> =
+            filas_del_dia.iter().map(|f| (f.barbero_id, f.sumas)).collect();
         p.transacciones.confirmar(cx).await?;
 
         let mut estados = CitasPorEstadoDto::default();
@@ -406,7 +403,7 @@ impl<C: Send + 'static> Reportes<C> {
             (hasta > desde).then_some((desde, hasta))
         };
         let mut ausentes = Vec::new();
-        let barberos = equipo
+        let mut barberos: Vec<RendimientoBarberoDto> = equipo
             .iter()
             .map(|b| {
                 let ausencia = b.ausencias.iter().find(|a| a.desde <= fecha && fecha <= a.hasta);
@@ -456,6 +453,24 @@ impl<C: Send + 'static> Reportes<C> {
                 }
             })
             .collect();
+        // Quien vendió ese día pero ya no está en el equipo de esa fecha (p. ej. se retiró el
+        // mismo día) también aparece: la tabla por barbero siempre suma el total del día.
+        for f in &filas_del_dia {
+            if !barberos.iter().any(|b| b.barbero_id == f.barbero_id) {
+                barberos.push(RendimientoBarberoDto {
+                    barbero_id: f.barbero_id,
+                    nombre: f.nombre.clone(),
+                    estado: "retirado".to_owned(),
+                    clientes_atendidos: f.sumas.ventas,
+                    servicios: f.sumas.servicios,
+                    ventas_netas: f.sumas.ventas_netas,
+                    propinas: f.sumas.propinas,
+                    minutos_ocupados: 0,
+                    minutos_disponibles: 0,
+                    ocupacion: None,
+                });
+            }
+        }
         let hoy_totales = totales(sumas_hoy);
         let antes = totales(sumas_antes);
         Ok(DashboardDto {

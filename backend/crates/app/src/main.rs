@@ -7,6 +7,8 @@
 //! - `diamante salud`: verificación de salud para Docker (sin `curl` en la imagen).
 //! - `diamante crear-administrador <correo> <nombre>`: invita al primer administrador de una
 //!   instalación nueva y muestra el enlace de activación.
+//! - `diamante enlace-acceso <correo>`: imprime un enlace de activación (cuenta sin activar) o
+//!   de recuperación (cuenta activada), sin enviar correo. Queda en la auditoría.
 
 mod adaptadores;
 mod administracion;
@@ -75,6 +77,13 @@ async fn main() -> ExitCode {
     let resultado = match comando.as_str() {
         "api" => api(&configuracion).await,
         "worker" => worker::ejecutar(&configuracion).await,
+        "enlace-acceso" => match &argumentos[1..] {
+            [correo] => administracion::enlace_acceso(&configuracion, correo).await,
+            _ => {
+                eprintln!("Uso: diamante enlace-acceso <correo>");
+                return ExitCode::from(2);
+            }
+        },
         "crear-administrador" => match &argumentos[1..] {
             [correo, nombre @ ..] if !nombre.is_empty() => {
                 administracion::crear_administrador(&configuracion, correo, &nombre.join(" ")).await
@@ -85,7 +94,7 @@ async fn main() -> ExitCode {
             }
         },
         _ => {
-            eprintln!("Uso: diamante <api|worker|migrar|salud|crear-administrador>");
+            eprintln!("Uso: diamante <api|worker|migrar|salud|crear-administrador|enlace-acceso>");
             return ExitCode::from(2);
         }
     };

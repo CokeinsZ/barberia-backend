@@ -30,8 +30,13 @@ contraseña y gestión de administradores. Los clientes no tienen cuenta.
 Errores propios: `credenciales_invalidas` (401, mensaje genérico), `acceso_suspendido` (403),
 `enlace_vencido` (410), `correo_en_uso`, `ultimo_administrador` y `no_puede_desactivarse` (409).
 
-Línea de comandos: `diamante crear-administrador <correo> <nombre>` invita al primer
-administrador (actor `sistema`) y muestra el enlace de activación.
+Línea de comandos (actor `sistema`, auditado):
+
+- `diamante crear-administrador <correo> <nombre>` invita al primer administrador y muestra el
+  enlace de activación.
+- `diamante enlace-acceso <correo>` muestra un enlace nuevo para una cuenta con acceso: de
+  activación si no la ha activado, de recuperación si ya lo hizo. No envía correo; sirve
+  cuando el correo no llega y para las pruebas contra preproducción.
 
 ## Reglas de seguridad
 

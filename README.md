@@ -48,7 +48,7 @@ backend/
 │   ├── nucleo/         # tipos de dominio compartidos (dinero, celular, reloj, eventos)
 │   ├── contratos/      # eventos entre módulos
 │   ├── plataforma/     # configuración, PostgreSQL, HTTP, telemetría; migración base
-│   └── app/            # raíz de composición y binario `diamante` (api | worker | migrar | salud | crear-administrador)
+│   └── app/            # raíz de composición y binario `diamante` (api | worker | migrar | salud | crear-administrador | enlace-acceso)
 ├── modulos/            # 13 módulos, cada uno con su esquema (salvo reportes, que solo lee vistas), sus capas y sus pruebas
 └── scripts/            # verificar-esquema.sh, estructurar-modulo.sh
 ```

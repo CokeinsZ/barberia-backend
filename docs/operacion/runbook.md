@@ -59,6 +59,9 @@ de la prueba de restauración).
 6. **Primera administradora**:
    `docker exec APP-api-1 /app/diamante crear-administrador laura@diamante.co "Laura Gómez"`.
    Imprime el enlace de activación (y lo envía por correo si hay SMTP).
+7. **Probar la preproducción** con la batería E2E contra el servidor desplegado
+   ([pruebas/preproduccion](../../pruebas/preproduccion/README.md)). Deja datos marcados
+   `E2E …` y mensajes de WhatsApp en cola: antes de abrir al público, reinicie la base.
 
 ## 3. Variables de producción
 
@@ -258,6 +261,7 @@ de seguridad:
 | WhatsApp no sale | Sin credenciales de Meta o plantilla rechazada | Avisos internos y `GET /mensajes`; sin Meta, los mensajes esperan en la cola |
 | 429 `demasiados_intentos` | Límite de uso (120/min por IP en lo público, 600/min por sesión en el panel) o de inicios de sesión (10 por IP cada 15 min) | Esperar el `Retry-After`; si es tráfico legítimo detrás de una misma IP, revisar los límites y la nota de Cloudflare |
 | «Credenciales inválidas» con la contraseña correcta | Cuenta bloqueada 15 minutos tras 5 fallos | Esperar 15 minutos o «Olvidé mi contraseña» |
+| Un enlace de activación o de recuperación no llegó o venció | Correo caído, dirección mal escrita o pasó la hora | `docker exec APP-api-1 /app/diamante enlace-acceso <correo>`: imprime un enlace nuevo (activación si la cuenta no está activada, recuperación si ya lo está), sin enviar correo, y queda en la auditoría |
 | La sesión pide entrar de nuevo | 12 h sin uso, 30 días con «Recordarme», o 30 días desde el inicio aunque se use | Comportamiento esperado (seguridad) |
 | La API, el worker o las migraciones no arrancan | Configuración inválida | Sus logs dicen qué falta o qué está mal (`Configuración inválida. Faltan: … Inválidas: …`) |
 | `password authentication failed` | La contraseña de *Environment* no es la que tiene el rol en la base (se fijó al crear el volumen) | `ALTER ROLE` con la nueva, o borrar el volumen si aún no hay datos |

@@ -228,7 +228,8 @@ pub struct ComparacionDto {
 pub struct RendimientoBarberoDto {
     pub barbero_id: i64,
     pub nombre: String,
-    /// `activo` o el tipo de ausencia (`vacaciones`, `incapacidad`…).
+    /// `activo`, el tipo de ausencia (`vacaciones`, `incapacidad`…) o `retirado` (vendió ese
+    /// día pero ya no está en el equipo de esa fecha).
     pub estado: String,
     pub clientes_atendidos: i64,
     pub servicios: i64,

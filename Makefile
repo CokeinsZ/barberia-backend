@@ -5,7 +5,7 @@
 PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario@127.0.0.1:5432/postgres
 
 .PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema \
-	rol-respaldo respaldo probar-restauracion coleccion rendimiento
+	rol-respaldo respaldo probar-restauracion coleccion rendimiento preproduccion
 
 ayuda: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
@@ -59,4 +59,8 @@ coleccion: ## Recorrido completo de la colección de Postman contra un ambiente 
 
 rendimiento: ## Pruebas de carga con dos años de datos (ver pruebas/rendimiento/README.md)
 	pruebas/rendimiento/correr.sh
+
+preproduccion: ## Batería E2E contra el servidor desplegado: make preproduccion URL=https://… SSH=usuario@vps
+	@test -n "$(URL)" || { echo "Falta URL=https://… (ver pruebas/preproduccion/README.md)"; exit 2; }
+	cd pruebas/preproduccion && DIAMANTE_URL="$(URL)" DIAMANTE_SSH="$(SSH)" node correr.mjs
 

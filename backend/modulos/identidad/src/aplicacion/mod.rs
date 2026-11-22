@@ -14,8 +14,8 @@ mod pruebas;
 use std::sync::Arc;
 
 use comandos::{
-    ActivarCuenta, CambiarContrasena, CambiarEstadoAdministrador, CerrarSesion, IniciarSesion,
-    InvitarAdministrador, RestablecerContrasena, SolicitarRecuperacion,
+    ActivarCuenta, CambiarContrasena, CambiarEstadoAdministrador, CerrarSesion, EmitirEnlaceDeAcceso,
+    IniciarSesion, InvitarAdministrador, RestablecerContrasena, SolicitarRecuperacion,
 };
 use consultas::{ConsultarSesion, ListarAdministradores, ValidarSesion};
 use fachada_cuentas::FachadaCuentas;
@@ -33,6 +33,7 @@ pub(crate) struct CasosDeUso<C: Send> {
     pub(crate) restablecer_contrasena: RestablecerContrasena<C>,
     pub(crate) cambiar_contrasena: CambiarContrasena<C>,
     pub(crate) invitar_administrador: InvitarAdministrador<C>,
+    pub(crate) emitir_enlace_de_acceso: EmitirEnlaceDeAcceso<C>,
     pub(crate) listar_administradores: ListarAdministradores<C>,
     pub(crate) cambiar_estado_administrador: CambiarEstadoAdministrador<C>,
     pub(crate) cuentas: Arc<FachadaCuentas<C>>,
@@ -51,6 +52,7 @@ impl<C: Send + 'static> CasosDeUso<C> {
             restablecer_contrasena: RestablecerContrasena::nuevo(p.clone()),
             cambiar_contrasena: CambiarContrasena::nuevo(p.clone()),
             invitar_administrador: InvitarAdministrador::nuevo(p.clone()),
+            emitir_enlace_de_acceso: EmitirEnlaceDeAcceso::nuevo(p.clone()),
             listar_administradores: ListarAdministradores::nuevo(p.clone()),
             cambiar_estado_administrador: CambiarEstadoAdministrador::nuevo(p.clone()),
             cuentas: Arc::new(FachadaCuentas::nueva(p)),

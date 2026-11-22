@@ -1115,3 +1115,103 @@ async fn sin_gotenberg_los_pdf_responden_503_despues_de_los_permisos() {
         0
     );
 }
+
+/// Quien vende y se retira el mismo día sigue en el rendimiento por barbero del dashboard: la
+/// tabla siempre suma el total del día (encontrado al probar contra preproducción).
+#[tokio::test]
+async fn el_dashboard_incluye_a_quien_se_retiro_el_mismo_dia() {
+    let base = BaseDePrueba::crear(&migraciones::origenes()).await;
+    let configuracion = Configuracion::desde(|clave| match clave {
+        "DATABASE_URL" => Some("postgres://sin-uso".into()),
+        "DIAMANTE_URL_PUBLICA" => Some(SITIO.into()),
+        "DIAMANTE_PRUEBAS_E2E" => Some("true".into()),
+        _ => None,
+    })
+    .unwrap();
+    let composicion = Composicion::con_reloj_de_pruebas(
+        base.pool.clone(),
+        Arc::new(nucleo::RelojDePruebas::default()),
+        &configuracion,
+    )
+    .unwrap();
+    let app = enrutador::construir(&composicion);
+    mover_reloj(&app, "2026-11-18T10:00:00-05:00").await;
+    composicion
+        .identidad
+        .invitar_administrador(&Actor::Sistema, "laura@diamante.co", "Laura Gómez")
+        .await
+        .unwrap();
+    activar(&app, &base, "laura@diamante.co").await;
+    let (_, admin) = entrar(&app, "laura@diamante.co").await;
+    let corte = id(&crear(
+        &app,
+        "/api/v1/servicios",
+        &admin,
+        json!({ "categoria_id": 1, "nombre": "Corte clásico", "descripcion": "Corte.", "precio": 35000, "duracion_min": 30 }),
+    )
+    .await);
+    let santiago = id(&crear(
+        &app,
+        "/api/v1/barberos",
+        &admin,
+        registro(
+            "Santiago",
+            "1020304050",
+            "santiago@diamante.co",
+            vec![json!(corte)],
+        ),
+    )
+    .await);
+    let mateo = id(&crear(
+        &app,
+        "/api/v1/barberos",
+        &admin,
+        registro("Mateo", "1020304051", "mateo@diamante.co", vec![json!(corte)]),
+    )
+    .await);
+    let efectivo = ver(&app, "/api/v1/ventas/catalogos", &admin).await["metodos_pago"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["codigo"] == "efectivo")
+        .map(id)
+        .unwrap();
+    for barbero in [santiago, mateo] {
+        crear(
+            &app,
+            "/api/v1/ventas",
+            &admin,
+            json!({ "cliente": { "tipo": "ocasional" }, "barbero_id": barbero, "servicio_ids": [corte],
+                    "pagos": [{ "metodo_pago_id": efectivo, "monto": 35000 }] }),
+        )
+        .await;
+    }
+    let r = pedir(
+        &app,
+        Method::POST,
+        &format!("/api/v1/barberos/{mateo}/retiro"),
+        Some(&admin),
+        Some(json!({ "fecha": "2026-11-18", "motivo": "renuncia_voluntaria" })),
+    )
+    .await;
+    assert!(r.estado.is_success(), "{}", r.json);
+
+    let d = ver(&app, "/api/v1/reportes/dashboard", &admin).await;
+    let filas = d["barberos"].as_array().unwrap();
+    let suma: i64 = filas.iter().map(|b| b["ventas_netas"].as_i64().unwrap()).sum();
+    assert_eq!(
+        (suma, d["hoy"]["ventas_netas"].as_i64()),
+        (70_000, Some(70_000)),
+        "{d}"
+    );
+    let retirado = filas.iter().find(|b| b["barbero_id"] == mateo).unwrap();
+    assert_eq!(
+        (
+            retirado["estado"].as_str(),
+            retirado["ventas_netas"].as_i64(),
+            retirado["ocupacion"].clone()
+        ),
+        (Some("retirado"), Some(35_000), Value::Null),
+        "{retirado}"
+    );
+}

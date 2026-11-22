@@ -29,3 +29,22 @@ pub(crate) async fn crear_administrador(
     composicion.pool.close().await;
     Ok(())
 }
+
+/// Imprime un enlace de acceso para una cuenta del personal, sin enviar correo: de activación
+/// si no la ha activado (p. ej. un barbero que no recibió la invitación) o de restablecimiento
+/// si ya la activó. Requiere acceso al servidor; queda en la auditoría.
+#[allow(
+    clippy::print_stdout,
+    reason = "es la salida del comando para la persona que lo ejecuta"
+)]
+pub(crate) async fn enlace_acceso(
+    configuracion: &Configuracion,
+    correo: &str,
+) -> Result<(), ErrorDeArranque> {
+    let composicion = Composicion::construir(configuracion).await?;
+    let enlace = composicion.identidad.enlace_de_acceso(correo).await?;
+    println!("Enlace de acceso para {correo} (un solo uso; no se envió por correo):");
+    println!("{enlace}");
+    composicion.pool.close().await;
+    Ok(())
+}

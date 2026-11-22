@@ -1068,3 +1068,49 @@ async fn cambiar_el_correo_reenvia_la_invitacion_pendiente() {
         Err(ErrorIdentidad::Prohibido)
     ));
 }
+
+#[tokio::test]
+async fn el_enlace_de_acceso_activa_o_restablece_segun_la_cuenta() {
+    let e = Escenario::nuevo();
+    e.casos
+        .invitar_administrador
+        .ejecutar(&LAURA, "camila@diamante.co", "Camila Rojas")
+        .await
+        .unwrap();
+    // Sin activar: enlace de activación nuevo, que sirve aunque no se haya enviado ningún correo.
+    let enlace = e
+        .casos
+        .emitir_enlace_de_acceso
+        .ejecutar("camila@diamante.co")
+        .await
+        .unwrap();
+    assert!(
+        enlace.starts_with("https://diamante.co/acceso/activar#token="),
+        "{enlace}"
+    );
+    let token = enlace.split_once("#token=").unwrap().1;
+    e.casos
+        .activar_cuenta
+        .ejecutar(token, CLAVE.into())
+        .await
+        .unwrap();
+    assert!(e.entrar("camila@diamante.co", CLAVE).await.is_ok());
+    // Activada: enlace de restablecimiento.
+    let enlace = e
+        .casos
+        .emitir_enlace_de_acceso
+        .ejecutar("camila@diamante.co")
+        .await
+        .unwrap();
+    assert!(
+        enlace.starts_with("https://diamante.co/acceso/restablecer#token="),
+        "{enlace}"
+    );
+    assert!(matches!(
+        e.casos
+            .emitir_enlace_de_acceso
+            .ejecutar("nadie@diamante.co")
+            .await,
+        Err(ErrorIdentidad::CuentaNoEncontrada)
+    ));
+}
