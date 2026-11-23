@@ -5,7 +5,7 @@ use nucleo::{Celular, ErrorPersistencia, SolicitudPagina};
 use plataforma::base_datos::{UnidadDeTrabajo, a_error_persistencia};
 
 use crate::api::{ClienteConocido, DatosReservaEnLinea};
-use crate::aplicacion::dto::AutorizacionDto;
+use crate::aplicacion::dto::{AutorizacionDto, ConteoSegmentosDto, IndicadoresClientesDto};
 use crate::aplicacion::puertos::{
     ClienteGuardado, RepositorioClientes, RepositorioTitular, SolicitudGuardada,
 };
@@ -254,6 +254,69 @@ impl RepositorioClientes<UnidadDeTrabajo> for RepositorioClientesPg {
             max_visitas_nuevo: i32::from(nuevo),
             max_visitas_recurrente: i32::from(recurrente),
             dias_inactividad: i64::from(dias),
+        })
+    }
+
+    async fn guardar_umbrales(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        u: &UmbralesSegmentos,
+    ) -> Result<(), ErrorPersistencia> {
+        // Ya validados (`UmbralesSegmentos::nuevos`): caben en `smallint`.
+        let a_smallint = |v: i64| i16::try_from(v).unwrap_or(i16::MAX);
+        sqlx::query(
+            "UPDATE clientes.configuracion_segmentos
+             SET max_visitas_nuevo = $1, max_visitas_recurrente = $2, dias_inactividad = $3
+             WHERE id = 1",
+        )
+        .bind(a_smallint(i64::from(u.max_visitas_nuevo)))
+        .bind(a_smallint(i64::from(u.max_visitas_recurrente)))
+        .bind(a_smallint(u.dias_inactividad))
+        .execute(uow.conexion())
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(())
+    }
+
+    async fn indicadores(
+        &self,
+        uow: &mut UnidadDeTrabajo,
+        hoy: NaiveDate,
+        u: UmbralesSegmentos,
+    ) -> Result<IndicadoresClientesDto, ErrorPersistencia> {
+        // Igual que `dominio::segmento`: sin visitas; «sin volver» si la última visita fue
+        // hace más de `dias_inactividad` días (prevalece); si no, por número de visitas.
+        let (registrados, sin_visitas, inactivo, nuevo, recurrente, frecuente): (i64, i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "WITH r AS (
+                   SELECT visitas, visitas > 0 AND coalesce(ultima_visita < $1::date - $4::int, false) AS sin_volver
+                   FROM clientes.v_cliente_resumen
+                 )
+                 SELECT count(*),
+                        count(*) FILTER (WHERE visitas = 0),
+                        count(*) FILTER (WHERE sin_volver),
+                        count(*) FILTER (WHERE visitas > 0 AND NOT sin_volver AND visitas <= $2),
+                        count(*) FILTER (WHERE NOT sin_volver AND visitas > $2 AND visitas <= $3),
+                        count(*) FILTER (WHERE NOT sin_volver AND visitas > $3)
+                 FROM r",
+            )
+            .bind(hoy)
+            .bind(u.max_visitas_nuevo)
+            .bind(u.max_visitas_recurrente)
+            .bind(i32::try_from(u.dias_inactividad).unwrap_or(i32::MAX))
+            .fetch_one(uow.conexion())
+            .await
+            .map_err(a_error_persistencia)?;
+        Ok(IndicadoresClientesDto {
+            registrados,
+            por_segmento: ConteoSegmentosDto {
+                sin_visitas,
+                nuevo,
+                recurrente,
+                frecuente,
+                inactivo,
+            },
+            dias_inactividad: u.dias_inactividad,
         })
     }
 }

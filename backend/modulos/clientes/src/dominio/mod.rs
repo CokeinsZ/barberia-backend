@@ -51,12 +51,56 @@ impl DatosCliente {
     }
 }
 
-/// Umbrales de los segmentos (DA-07, RN-20).
+/// Umbrales de los segmentos (DA-07, RN-20), configurables (RF-CFG-08).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UmbralesSegmentos {
     pub(crate) max_visitas_nuevo: i32,
     pub(crate) max_visitas_recurrente: i32,
     pub(crate) dias_inactividad: i64,
+}
+
+/// Topes de los umbrales: los mismos de la tabla `clientes.configuracion_segmentos`.
+pub(crate) const MAX_VISITAS_UMBRAL: i64 = 100;
+pub(crate) const DIAS_INACTIVIDAD: std::ops::RangeInclusive<i64> = 15..=365;
+
+impl UmbralesSegmentos {
+    /// «Nuevo» hasta `nuevo` visitas (al menos 1), «Recurrente» hasta `recurrente` (más que
+    /// «Nuevo»; de ahí en adelante, «Frecuente») y «Sin volver» tras `dias` días sin venir.
+    pub(crate) fn nuevos(nuevo: i64, recurrente: i64, dias: i64) -> Result<Self, Vec<ErrorDeCampo>> {
+        let mut v = Validacion::default();
+        if !(1..MAX_VISITAS_UMBRAL).contains(&nuevo) {
+            v.error(
+                "max_visitas_nuevo",
+                format!("Entre 1 y {} visitas.", MAX_VISITAS_UMBRAL - 1),
+            );
+        }
+        if recurrente > MAX_VISITAS_UMBRAL {
+            v.error(
+                "max_visitas_recurrente",
+                format!("Hasta {MAX_VISITAS_UMBRAL} visitas."),
+            );
+        } else if recurrente <= nuevo {
+            v.error(
+                "max_visitas_recurrente",
+                "Debe ser mayor que el máximo de visitas de «Nuevo».",
+            );
+        }
+        if !DIAS_INACTIVIDAD.contains(&dias) {
+            v.error(
+                "dias_inactividad",
+                format!(
+                    "Entre {} y {} días.",
+                    DIAS_INACTIVIDAD.start(),
+                    DIAS_INACTIVIDAD.end()
+                ),
+            );
+        }
+        v.terminar(|| UmbralesSegmentos {
+            max_visitas_nuevo: i32::try_from(nuevo).unwrap_or_default(),
+            max_visitas_recurrente: i32::try_from(recurrente).unwrap_or_default(),
+            dias_inactividad: dias,
+        })
+    }
 }
 
 /// Nuevo (1 o 2 visitas), Recurrente (3 a 5), Frecuente (6 o más) y Sin volver (última visita
@@ -103,6 +147,36 @@ mod pruebas {
                 .map(|e| e.campo)
                 .collect();
         assert_eq!(campos, ["nombre", "celular", "correo", "fecha_nacimiento"]);
+    }
+
+    #[test]
+    fn valida_los_umbrales() {
+        assert_eq!(
+            UmbralesSegmentos::nuevos(2, 5, 60),
+            Ok(UmbralesSegmentos {
+                max_visitas_nuevo: 2,
+                max_visitas_recurrente: 5,
+                dias_inactividad: 60
+            })
+        );
+        assert!(UmbralesSegmentos::nuevos(1, 2, 15).is_ok());
+        assert!(UmbralesSegmentos::nuevos(99, 100, 365).is_ok());
+        let campos = |r: Result<UmbralesSegmentos, Vec<ErrorDeCampo>>| -> Vec<String> {
+            r.unwrap_err().into_iter().map(|e| e.campo).collect()
+        };
+        assert_eq!(campos(UmbralesSegmentos::nuevos(0, 5, 60)), ["max_visitas_nuevo"]);
+        assert_eq!(
+            campos(UmbralesSegmentos::nuevos(5, 5, 60)),
+            ["max_visitas_recurrente"]
+        );
+        assert_eq!(
+            campos(UmbralesSegmentos::nuevos(2, 101, 14)),
+            ["max_visitas_recurrente", "dias_inactividad"]
+        );
+        assert_eq!(
+            campos(UmbralesSegmentos::nuevos(i64::MAX, i64::MIN, 366)),
+            ["max_visitas_nuevo", "max_visitas_recurrente", "dias_inactividad"]
+        );
     }
 
     #[test]

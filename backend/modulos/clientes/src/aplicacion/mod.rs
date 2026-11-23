@@ -10,7 +10,8 @@ pub(crate) mod titular;
 use std::sync::Arc;
 
 pub(crate) use casos::{
-    BuscarClientes, CrearCliente, EditarCliente, FichaCliente, ListarClientes, SolicitudCliente,
+    BuscarClientes, ConfiguracionSegmentos, CrearCliente, EditarCliente, FichaCliente, ListarClientes,
+    SolicitudCliente,
 };
 pub(crate) use fachada::FachadaClientes;
 use puertos::Puertos;
@@ -26,6 +27,7 @@ pub(crate) struct CasosDeUso<C: Send> {
     pub(crate) crear: CrearCliente<C>,
     pub(crate) editar: EditarCliente<C>,
     pub(crate) titular: titular::Titular<C>,
+    pub(crate) segmentos: ConfiguracionSegmentos<C>,
     pub(crate) fachada: Arc<FachadaClientes<C>>,
 }
 
@@ -39,6 +41,7 @@ impl<C: Send> CasosDeUso<C> {
             crear: CrearCliente { p: p.clone() },
             editar: EditarCliente { p: p.clone() },
             titular: titular::Titular { p: p.clone() },
+            segmentos: ConfiguracionSegmentos { p: p.clone() },
             fachada: Arc::new(FachadaClientes { p }),
         }
     }

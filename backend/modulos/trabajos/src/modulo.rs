@@ -5,7 +5,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use nucleo::{ErrorPersistencia, Reloj};
 use sqlx::PgPool;
 
-use crate::api::{Programacion, ResumenTrabajos, Tarea};
+use crate::api::{EstadoTrabajos, Programacion, ResumenTrabajos, Tarea};
 use crate::aplicacion::Ejecutor;
 use crate::infraestructura::{RepositorioTrabajosPg, limpiar};
 
@@ -43,6 +43,11 @@ impl ModuloTrabajos {
     /// Una pasada: programa las tareas periódicas de la franja vigente y ejecuta las listas.
     pub async fn pasada(&self) -> Result<ResumenTrabajos, ErrorPersistencia> {
         self.ejecutor.pasada().await
+    }
+
+    /// Estado de la cola (RNF-OBS-02): lo usa la vigilancia.
+    pub async fn estado(&self) -> Result<EstadoTrabajos, ErrorPersistencia> {
+        crate::infraestructura::estado(&self.pool, self.ejecutor.reloj.ahora()).await
     }
 
     /// Mantenimiento: borra los trabajos completados hace más de 30 días.

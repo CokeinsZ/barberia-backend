@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use chrono::NaiveDate;
-use contratos::barberos::AccesoRevocado;
+use contratos::barberos::{AccesoRevocado, BarberoRetirado};
 use nucleo::identificadores::IdBarbero;
 use nucleo::{Actor, ErrorDeCampo};
 use serde_json::json;
@@ -145,6 +145,14 @@ impl<C: Send + 'static> RetirarBarbero<C> {
         }
         let retiro = Retiro::nuevo(fecha, motivo, barbero.fecha_ingreso, p.hoy())?;
         p.barberos.retirar(&mut cx, id, &retiro).await?;
+        p.publicar(
+            &mut cx,
+            &BarberoRetirado {
+                barbero: id,
+                fecha: retiro.fecha,
+            },
+        )
+        .await?;
         if retiro.fecha <= p.hoy() {
             p.cuentas
                 .cambiar_acceso(&mut cx, actor, barbero.usuario, false, &barbero.nombre())

@@ -5,7 +5,9 @@ use chrono::NaiveDate;
 use nucleo::identificadores::{IdBarbero, IdCliente};
 use nucleo::{Actor, Dinero, ErrorDeCampo, ErrorPersistencia, Pagina, SolicitudPagina};
 
-use super::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto};
+use super::dto::{
+    ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto, ConfiguracionSegmentosDto, ListadoClientesDto,
+};
 use super::errores::ErrorClientes;
 use super::puertos::{ClienteGuardado, Puertos, RESTRICCION_CELULAR};
 use super::{ENTIDAD, MODULO};
@@ -111,7 +113,8 @@ impl<C: Send> BuscarClientes<C> {
     }
 }
 
-/// Listado paginado con métricas y segmento (RF-CLI-02, RF-CLI-04). Solo administradores.
+/// Listado paginado con métricas y segmento, y los indicadores de la base en `meta`
+/// (RF-CLI-02, RF-CLI-04). Solo administradores.
 #[derive(Debug)]
 pub(crate) struct ListarClientes<C: Send> {
     pub(crate) p: Arc<Puertos<C>>,
@@ -124,7 +127,7 @@ impl<C: Send> ListarClientes<C> {
         texto: Option<String>,
         segmento_buscado: Option<String>,
         pagina: SolicitudPagina,
-    ) -> Result<Pagina<ClienteListadoDto>, ErrorClientes> {
+    ) -> Result<ListadoClientesDto, ErrorClientes> {
         solo_administrador(actor)?;
         let p = &self.p;
         let pagina = pagina.normalizada();
@@ -158,8 +161,64 @@ impl<C: Send> ListarClientes<C> {
                 )
             }
         };
+        let meta = p.clientes.indicadores(&mut cx, hoy, u).await?;
         p.transacciones.confirmar(cx).await?;
-        Ok(resultado)
+        Ok(ListadoClientesDto {
+            pagina: resultado,
+            meta,
+        })
+    }
+}
+
+fn configuracion_dto(u: UmbralesSegmentos) -> ConfiguracionSegmentosDto {
+    ConfiguracionSegmentosDto {
+        max_visitas_nuevo: u.max_visitas_nuevo,
+        max_visitas_recurrente: u.max_visitas_recurrente,
+        dias_inactividad: u.dias_inactividad,
+    }
+}
+
+/// Umbrales de los segmentos (RF-CFG-08). Solo administradores; cada cambio queda en la
+/// auditoría. Los segmentos se calculan al consultar (RF-SIS-06): el cambio se ve de inmediato
+/// en el listado, la ficha y los reportes («por reactivar» usa los días de inactividad).
+#[derive(Debug)]
+pub(crate) struct ConfiguracionSegmentos<C: Send> {
+    pub(crate) p: Arc<Puertos<C>>,
+}
+
+impl<C: Send> ConfiguracionSegmentos<C> {
+    pub(crate) async fn consultar(&self, actor: &Actor) -> Result<ConfiguracionSegmentosDto, ErrorClientes> {
+        solo_administrador(actor)?;
+        let p = &self.p;
+        let mut cx = p.transacciones.iniciar().await?;
+        let u = p.clientes.umbrales(&mut cx).await?;
+        p.transacciones.confirmar(cx).await?;
+        Ok(configuracion_dto(u))
+    }
+
+    pub(crate) async fn guardar(
+        &self,
+        actor: &Actor,
+        max_visitas_nuevo: i64,
+        max_visitas_recurrente: i64,
+        dias_inactividad: i64,
+    ) -> Result<ConfiguracionSegmentosDto, ErrorClientes> {
+        solo_administrador(actor)?;
+        let nuevos = UmbralesSegmentos::nuevos(max_visitas_nuevo, max_visitas_recurrente, dias_inactividad)?;
+        let p = &self.p;
+        let mut cx = p.transacciones.iniciar().await?;
+        let antes = p.clientes.umbrales(&mut cx).await?;
+        p.clientes.guardar_umbrales(&mut cx, &nuevos).await?;
+        p.auditor
+            .registrar(
+                &mut cx,
+                EntradaAuditoria::nueva(actor, MODULO, "cambiar_segmentos", "configuracion_segmentos", 1)
+                    .antes(&configuracion_dto(antes))
+                    .despues(&configuracion_dto(nuevos)),
+            )
+            .await?;
+        p.transacciones.confirmar(cx).await?;
+        Ok(configuracion_dto(nuevos))
     }
 }
 

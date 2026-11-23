@@ -12,7 +12,8 @@ salida=${SALIDA:-$(mktemp -d)}
 [ -d pruebas/api/node_modules ] || (cd pruebas/api && npm install --no-audit --no-fund)
 
 "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-"${compose[@]}" up -d --wait
+# --build: sin él, `up` reusa la imagen que haya y la colección probaría el código viejo.
+"${compose[@]}" up -d --wait --build
 "${compose[@]}" exec -T api /app/diamante crear-administrador laura@diamante.co "Laura Gómez"
 hoy=$(TZ=America/Bogota date +%F)
 comunes=(secreto_whatsapp=secreto-de-pruebas-whatsapp token_webhook=token-de-pruebas "hoy=$hoy")

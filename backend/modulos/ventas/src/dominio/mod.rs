@@ -81,16 +81,21 @@ pub(crate) fn validar_pagos(pagos: &[(i16, Dinero)], total: Dinero) -> Result<()
     if total.valor() > 0 && pagos.is_empty() {
         v.error("pagos", "Indica el método de pago.");
     }
-    let suma = pagos.iter().map(|(_, m)| m.valor()).sum::<i64>();
-    if suma != total.valor() {
-        v.error(
+    // Con suma comprobada: un monto absurdo no puede desbordarla (y dar un pánico o, peor,
+    // una suma que da la vuelta).
+    match pagos
+        .iter()
+        .try_fold(Dinero::CERO, |suma, (_, monto)| suma.sumar(*monto).ok())
+    {
+        Some(suma) if suma == total => {}
+        Some(suma) => v.error(
             "pagos",
-            format!(
-                "Los pagos suman {} y el total a cobrar es {}.",
-                Dinero::pesos(suma).unwrap_or(Dinero::CERO),
-                total
-            ),
-        );
+            format!("Los pagos suman {suma} y el total a cobrar es {total}."),
+        ),
+        None => v.error(
+            "pagos",
+            format!("Los pagos superan con creces el total a cobrar ({total})."),
+        ),
     }
     v.terminar(|| ())
 }
@@ -101,6 +106,19 @@ mod pruebas {
 
     fn pesos(valor: i64) -> Dinero {
         Dinero::pesos(valor).unwrap()
+    }
+
+    #[test]
+    fn pagos_enormes_no_desbordan_la_suma() {
+        let tope = pesos(Dinero::MAXIMO);
+        let errores = validar_pagos(&[(1, tope), (2, tope), (3, tope)], pesos(36_000)).unwrap_err();
+        assert_eq!(errores.len(), 1);
+        assert!(
+            errores[0].mensaje.contains("y el total a cobrar es $36.000"),
+            "{}",
+            errores[0].mensaje
+        );
+        assert!(validar_pagos(&[(1, pesos(20_000)), (2, pesos(16_000))], pesos(36_000)).is_ok());
     }
 
     #[test]

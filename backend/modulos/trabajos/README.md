@@ -26,6 +26,12 @@ Cola de tareas en segundo plano y planificador del worker.
 | `agenda.recordatorios` | 5 minutos | Recordatorios de 24 h y 2 h (RF-NOT-02) |
 | `sistema.mantenimiento` | 3:00 a. m. de Bogotá (RNF-DIS-02) | Borra sesiones y enlaces de acceso vencidos, códigos viejos, enlaces de citas pasadas, webhooks procesados y trabajos completados hace más de 30 días |
 
+**Vigilancia** (RNF-OBS-02): `ModuloTrabajos::estado()` da los trabajos vencidos sin tomar (y el
+atraso del más antiguo), los atascados en proceso, los fallidos de las últimas 24 horas y los
+minutos desde que terminó el último. Con el worker en marcha, los recordatorios terminan cada 5
+minutos: más de 15 sin ningún trabajo terminado (o algo vencido hace 10) es la alerta
+`worker_detenido` de `GET /api/salud/operacion`.
+
 ## Eventos
 
 - Publica: ninguno. Consume: ninguno.

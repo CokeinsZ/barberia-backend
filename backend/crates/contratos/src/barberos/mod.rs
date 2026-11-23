@@ -27,6 +27,15 @@ pub struct AusenciaRegistrada {
 }
 evento!(AusenciaRegistrada, "barberos.ausencia_registrada");
 
+/// El barbero se retira desde `fecha` (hoy o más adelante): `agenda` avisa a la administradora
+/// de sus citas pendientes desde ese día, para reasignarlas o pedir a los clientes otra hora.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BarberoRetirado {
+    pub barbero: IdBarbero,
+    pub fecha: NaiveDate,
+}
+evento!(BarberoRetirado, "barberos.barbero_retirado");
+
 /// El barbero se retiró o perdió el acceso al panel: `identidad` desactiva la cuenta y cierra sesiones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccesoRevocado {

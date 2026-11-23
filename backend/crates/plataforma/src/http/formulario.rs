@@ -7,6 +7,7 @@ use axum::extract::{FromRequest, Multipart, Request};
 use axum::http::StatusCode;
 
 use super::ErrorHttp;
+use super::entrada::revisar_texto;
 
 /// Archivo recibido, todavía sin validar (el módulo `archivos` valida tipo y tamaño).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +58,13 @@ impl<S: Send + Sync> FromRequest<S> for Formulario {
             .await
             .map_err(|_| ErrorHttp::solicitud_invalida("Envíe el formulario como multipart/form-data."))?;
         let mut formulario = Formulario::default();
+        let mut errores = Vec::new();
         while let Some(campo) = multipart.next_field().await.map_err(traducir)? {
             let nombre = campo.name().unwrap_or_default().to_owned();
+            errores.extend(revisar_texto(&nombre, &nombre));
             match campo.file_name().map(str::to_owned) {
                 Some(nombre_archivo) => {
+                    errores.extend(revisar_texto(&nombre, &nombre_archivo));
                     let contenido = campo.bytes().await.map_err(traducir)?.to_vec();
                     formulario.archivos.insert(
                         nombre,
@@ -72,9 +76,13 @@ impl<S: Send + Sync> FromRequest<S> for Formulario {
                 }
                 None => {
                     let texto = campo.text().await.map_err(traducir)?;
+                    errores.extend(revisar_texto(&nombre, &texto));
                     formulario.campos.insert(nombre, texto);
                 }
             }
+        }
+        if !errores.is_empty() {
+            return Err(ErrorHttp::validacion(errores));
         }
         Ok(formulario)
     }

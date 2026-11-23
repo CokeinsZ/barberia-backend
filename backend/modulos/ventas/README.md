@@ -38,13 +38,19 @@ RF-CFG-07).
 - **Barbero**: activo en la fecha y que ofrezca todos los servicios (RN-05). Si registra un
   barbero, queda a su nombre aunque pida otro (RF-PBA-04).
 - **Cita**: de hoy o anterior, por atender; una cita atendida responde `409 cita_ya_cobrada`.
-  La cita queda «Atendida» en la misma transacción (RF-VEN-09).
+  La cita queda «Atendida» en la misma transacción (RF-VEN-09). Una cita nunca tiene dos ventas
+  vigentes (índice único parcial `venta_cita_vigente_uk`, solo entre las registradas): si su
+  venta se anula, se puede volver a cobrar.
 - **Totales** (los calcula el servidor): subtotal con el precio vigente, descuento con motivo
   (nunca mayor que el subtotal; el barbero solo los permitidos), venta neta, propina libre (100 %
   del barbero, no paga comisión), total y comisión con el porcentaje vigente del barbero, que se
   copia en la venta (RN-12 a 15, RNF-INT-05).
 - **Pagos**: métodos activos y distintos; la suma debe ser exactamente el total (admite dos
   métodos, RF-VEN-13). La base vuelve a verificar el cuadre al confirmar (triggers diferidos).
+- **Montos**: ningún valor en pesos pasa de un billón (`Dinero::MAXIMO`): la propina (tope de
+  cordura de $1.000.000), los pagos y lo contado en el cierre se validan antes de convertirlos,
+  así que un valor fuera de rango es un `422` en su campo y nunca un 0 en silencio. Las sumas se
+  hacen comprobadas: un monto absurdo no desborda la suma de los pagos ni la diferencia del cierre.
 - **Ticket**: consecutivo sin huecos con el contador bloqueado en la transacción (RN-19).
 
 ## Eventos que publica (crate `contratos`)
@@ -52,8 +58,10 @@ RF-CFG-07).
 - `VentaRegistrada`: `agenda` deja la cita «Atendida»; `clientes` suma visita, gasto, última
   visita y barbero habitual.
 - `VentaAnulada`: `clientes` resta la visita y el gasto y recalcula la última visita con las
-  ventas vigentes (las calcula este módulo y van en el evento). La cita sigue «Atendida»: el
-  servicio se prestó; si hay que volver a cobrar, se registra una venta sin cita.
+  ventas vigentes (las calcula este módulo y van en el evento); `agenda` devuelve la cita a
+  «Confirmada» (fase 8): se cobra de nuevo con la venta correcta, o se marca la inasistencia si
+  se cobró a la cita equivocada. Así «Atendida» siempre tiene una venta vigente detrás. (Antes la
+  cita seguía «Atendida» sin venta y no había forma de corregirla.)
 
 ## Eventos que consume
 

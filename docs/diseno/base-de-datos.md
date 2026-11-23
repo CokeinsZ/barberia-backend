@@ -2,7 +2,7 @@
 
 **Proyecto**: Diamante Barbería · **Motor**: PostgreSQL 18 · **Versión del documento**: 1.0 (18/11/2026)
 
-El script ejecutable está en [esquema.sql](esquema.sql). Se probó sobre PostgreSQL 18.6: se aplica sin errores, pasa 27 pruebas de reglas de negocio y responde las consultas críticas en milisegundos con cinco años de datos simulados (sección 9).
+El script ejecutable está en [esquema.sql](esquema.sql). Se probó sobre PostgreSQL 18.6: se aplica sin errores, pasa 28 pruebas de reglas de negocio y responde las consultas críticas en milisegundos con cinco años de datos simulados (sección 9).
 
 ---
 
@@ -185,11 +185,11 @@ Criterios aplicados: índices parciales para colas y estados activos (más peque
 Sobre PostgreSQL 18.6 local, en un clúster temporal:
 
 1. **El script se aplica sin errores** y crea 12 esquemas, 45 tablas, 6 vistas publicadas, 1 función de lectura y 114 índices (incluidas llaves y restricciones).
-2. **27 pruebas de comportamiento, todas superadas**:
+2. **28 pruebas de comportamiento, todas superadas**:
    - **Cuentas, catálogo y clientes**: un administrador no puede apuntar a una cuenta de barbero; un combo no se contiene ni agrupa otro combo; el nombre del servicio es único sin importar tildes; el correo es único sin importar mayúsculas; el celular debe ser colombiano válido.
    - **Horarios y ausencias**: franjas y ausencias solapadas se rechazan; un cierre temprano exige hora.
    - **Citas**: no se cruzan, pero una puede empezar cuando termina otra; cancelar libera el horario; una cancelación incompleta se rechaza; una cita del panel registra quién la creó.
-   - **Ventas**: una venta cuadrada se confirma; una descuadrada o sin servicios se rechaza; la fecha de operación usa la hora de Bogotá; `v_venta` calcula neta, total y comisión; anular exige datos completos.
+   - **Ventas**: una venta cuadrada se confirma; una descuadrada o sin servicios se rechaza; la fecha de operación usa la hora de Bogotá; `v_venta` calcula neta, total y comisión; anular exige datos completos; una cita no tiene dos ventas vigentes (si su venta se anula, se puede volver a cobrar).
    - **Estado y horario de los barberos**: el estado se calcula por fecha y vuelve solo a «Activo»; el horario de atención sale de las franjas.
    - **Auditoría y anonimización**: la auditoría no se modifica ni se borra; un cliente anonimizado no conserva datos personales.
 3. **Carga de cinco años simulados** (40.689 citas, 39.703 ventas, 6.002 clientes) con `EXPLAIN ANALYZE` de las consultas críticas (sección 6).
@@ -203,7 +203,7 @@ createdb diamante
 psql -d diamante -v ON_ERROR_STOP=1 -f docs/diseno/esquema.sql
 
 # Verificación (sección 9), sobre una base recién creada:
-psql -d diamante -f docs/diseno/pruebas-esquema.sql   # 27 líneas «OK», ninguna «FALLA»
+psql -d diamante -f docs/diseno/pruebas-esquema.sql   # 28 líneas «OK», ninguna «FALLA»
 psql -d diamante -f docs/diseno/carga-y-planes.sql    # carga cinco años simulados y muestra los planes
 ```
 

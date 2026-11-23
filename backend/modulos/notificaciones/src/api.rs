@@ -191,6 +191,31 @@ pub struct ResumenEnvio {
     pub fallidos: usize,
 }
 
+/// Un canal de la cola de salida (RNF-OBS-02).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct EstadoCanal {
+    /// Si el canal envía: SMTP configurado para el correo; un proveedor para WhatsApp.
+    pub configurado: bool,
+    /// Mensajes cuya hora de envío ya llegó y siguen en la cola.
+    pub pendientes: i64,
+    /// Minutos desde la hora programada del pendiente más antiguo.
+    pub atraso_min: Option<i64>,
+    pub enviados_24h: i64,
+    pub fallidos_24h: i64,
+    pub fallidos_ultima_hora: i64,
+}
+
+/// Estado de la cola de salida y de los webhooks de Meta (RNF-OBS-02).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct EstadoCola {
+    pub correo: EstadoCanal,
+    pub whatsapp: EstadoCanal,
+    pub webhooks_pendientes: i64,
+    /// Minutos desde que llegó el webhook pendiente más antiguo.
+    pub webhooks_atraso_min: Option<i64>,
+    pub webhooks_con_error_24h: i64,
+}
+
 /// Resultado de procesar los webhooks recibidos.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct ResumenWebhooks {

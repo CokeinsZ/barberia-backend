@@ -66,7 +66,15 @@ Formato *Problem Details* (RFC 9457), con `Content-Type: application/problem+jso
 | 410 | `enlace_vencido`, `codigo_vencido` | Token o código vencido. |
 | 422 | `validacion` | Reglas de negocio o de formato; `errores` trae `[{ "campo": "celular", "mensaje": "…" }]`. |
 | 429 | `demasiados_intentos` | Límite de intentos; incluye el encabezado `Retry-After`. |
-| 500 | `error_interno` | Error inesperado; incluye un `id_solicitud` para rastrearlo en los logs. |
+| 500 | `error_interno` | Error inesperado (también un pánico, que no corta la conexión); el encabezado `x-request-id` sirve para rastrearlo en los logs. |
+
+Además de las reglas de cada módulo, **toda entrada pasa por una revisión común** (cuerpo JSON,
+parámetros de la URL y campos de un formulario): un texto con el carácter nulo (`\u0000`) o una
+fecha (`AAAA-MM-DD`, `AAAA-MM` o un instante ISO 8601) fuera de los años 1900 a 2999 responde
+`422 validacion` con el campo (`cliente_nuevo.nombre`, `pagos[1].monto`). Un valor en pesos por
+encima de un billón (10¹²) se rechaza con `422` en su campo (o `400` si ni siquiera cabe en un
+entero), nunca se convierte en otro valor. Ninguna entrada, por rara que sea, produce un `5xx`:
+lo comprueba una prueba que recorre todas las rutas con valores hostiles (`pruebas_robustez.rs`).
 
 ### 1.4 Límites de uso (por IP, salvo indicación)
 
@@ -186,7 +194,7 @@ Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Optio
 
 | Método | Ruta | Perfil | Descripción | Requisitos |
 |---|---|---|---|---|
-| GET | `/clientes?q=&segmento=&pagina=` | Admin | Listado paginado con métricas, segmento y barbero habitual; indicadores de la base en `meta`. | RF-CLI-02, RF-CLI-04 |
+| GET | `/clientes?q=&segmento=&pagina=` | Admin | Listado paginado con métricas, segmento y barbero habitual. `meta`: indicadores de toda la base (sin importar los filtros): `registrados`, `por_segmento` (`sin_visitas`, `nuevo`, `recurrente`, `frecuente`, `inactivo`) y `dias_inactividad`. «Nuevos del mes» y «vuelven en menos de 60 días» salen de las ventas: `GET /reportes/clientes`. | RF-CLI-02, RF-CLI-04 |
 | GET | `/clientes/buscar?q=` | Admin; Barbero | Búsqueda rápida por nombre o celular para la agenda y la venta (máximo 8 resultados, solo nombre, celular y segmento). | RF-VEN-03 |
 | POST | `/clientes` | Admin; Barbero | `{ nombre, celular, correo }`, desde el panel. | RF-CLI-01 |
 | GET | `/clientes/{id}` | Admin | Ficha: datos, métricas, autorizaciones y preferencias. Las últimas visitas salen de `GET /ventas?cliente_id=`. | RF-CLI-03 |
@@ -195,7 +203,7 @@ Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Optio
 | GET | `/clientes/exportacion.xlsx` | Admin | Exportación (auditada). | RF-CLI-06 (Could) |
 | GET / POST | `/clientes/solicitudes-titular` | Admin | Registrar (`{ cliente_id, tipo: consulta \| actualizacion \| supresion, descripcion }`) y consultar (`?abiertas=true`) solicitudes de habeas data, con su plazo legal (`responder_antes_de`: 10 o 15 días hábiles). | RNF-LEG-03 |
 | PATCH | `/clientes/solicitudes-titular/{id}` | Admin | `{ respuesta }`, una sola vez. | RNF-LEG-03 |
-| GET / PUT | `/clientes/configuracion-segmentos` | Admin | Umbrales de los segmentos (pendiente: entrega 2). | RF-CFG-08 |
+| GET / PUT | `/clientes/configuracion-segmentos` | Admin | Umbrales de los segmentos: `{ max_visitas_nuevo (1–99), max_visitas_recurrente (mayor, hasta 100), dias_inactividad (15–365) }`; auditados. Se aplican al consultar: listado, ficha, búsqueda y reportes («por reactivar»). | RF-CFG-08, RF-SIS-06 |
 
 ### 2.8 Agenda (módulo `agenda`)
 
@@ -217,6 +225,7 @@ Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Optio
 | POST | `/agenda/citas/aviso-reprogramacion` | Admin | `{ cita_ids }` → `{ avisadas }`: pide a los clientes elegir otra hora por WhatsApp, con un enlace nuevo. | RF-BAR-14 |
 | GET | `/agenda/pendientes-de-cierre?fecha=` | Admin | Citas pasadas sin venta ni inasistencia. | RF-AGE-12 |
 | GET / PUT | `/agenda/configuracion` | Admin | Reglas de agendamiento. | RF-CFG-02 |
+| GET | `/agenda/resumen-barbero?barbero_id=` | Barbero (el suyo, aunque pida otro); Admin con `barbero_id` | «Mis citas»: `hoy`, `manana` y `proximos_7_dias` (de mañana al séptimo día, con sus totales y `dias_con_agenda_llena`). Cada día: `tipo_dia`, `estado` (`trabaja`, `no_trabaja`, `retirado` o el tipo de ausencia), citas por estado, `minutos_disponibles` (franjas − bloqueos), `minutos_ocupados`, `minutos_libres` (`null` si no trabaja) y `agenda_llena` (no cabe su servicio más corto, con las reglas del agendamiento). | RF-PBA-02 |
 
 ### 2.9 Ventas y caja (módulo `ventas`)
 
@@ -226,7 +235,7 @@ Toda respuesta de la API lleva `X-Content-Type-Options: nosniff`, `X-Frame-Optio
 | POST | `/ventas` | Admin; Barbero (propio) | Registra la venta (ver ejemplo en 3.2). Para el barbero, `barbero_id` se fija al suyo. | RF-VEN-01…09, RF-PBA-04 |
 | GET | `/ventas?fecha=&desde=&hasta=&barbero_id=&cliente_id=&incluir_anuladas=&pagina=` | Admin; Barbero (propio) | Ventas (sin filtros: las de hoy; con `cliente_id`: su historial). | RF-VEN-10, RF-PBA-05 |
 | GET | `/ventas/{id}` | Admin; Barbero (propio) | Detalle con líneas y pagos. | RF-VEN-01 |
-| POST | `/ventas/{id}/anulacion` | Admin | `{ motivo }`; publica `VentaAnulada`. | RF-VEN-12 |
+| POST | `/ventas/{id}/anulacion` | Admin | `{ motivo }`; publica `VentaAnulada`. Si la venta era de una cita, la cita vuelve a «Confirmada» (evento `venta_anulada` en su historial) y se puede volver a cobrar: una cita nunca tiene dos ventas vigentes. | RF-VEN-12 |
 | GET | `/ventas/caja?fecha=&barbero_id=` | Admin | Caja del día: total neto, número de ventas, propinas, desglose por método (propinas incluidas), anuladas y las ventas del día (filtrables por barbero). | RF-VEN-10 |
 | GET | `/ventas/resumen-barbero?fecha=&barbero_id=` | Barbero (propio); Admin con `barbero_id` | «Lo que llevas hoy»: comisión + propinas y ventas netas. | RF-PBA-05 |
 | GET | `/ventas/cierres?fecha=` | Admin | Cierre del día (`404` si no hay), con lo esperado por método, lo contado y la diferencia. | RF-VEN-11 |
@@ -268,6 +277,8 @@ Periodo (RF-REP-01, RN-22): `?mes=AAAA-MM` o `?desde=&hasta=`; sin nada, el mes 
 |---|---|---|
 | GET | `/salud` | Proceso vivo (para Docker). |
 | GET | `/salud/lista` | Listo para atender: responde la base de datos. |
+| GET | `/salud/operacion` | Para el monitor externo (RNF-OBS-02): `200 {"estado":"ok"}` o `503 {"estado":"alerta","alertas":[códigos]}` (sin cifras ni datos personales). Códigos: `errores_del_servidor`, `api_lenta`, `worker_detenido`, `trabajos_atascados`, `correos_atrasados`, `correo_sin_configurar`, `whatsapp_atrasados`, `whatsapp_fallidos`. |
+| GET | `/api/v1/sistema/estado` | Solo Admin: alertas con su mensaje, informativos (p. ej., WhatsApp sin proveedor), métricas de la API de este proceso (peticiones por clase, `5xx` y latencia p50/p95/p99 de los últimos 5 y 15 minutos y desde el arranque, rutas destacadas por su plantilla), cola de mensajes por canal (pendientes, atraso, enviados y fallidos) y trabajos (vencidos, atascados, minutos desde el último). |
 | GET | `/media/publico/{clave}` | Fotos públicas, servidas por la API desde el volumen con caché de un año (claves aleatorias e inmutables). |
 | GET | `/api/v1/archivos/{id}?exp=&firma=` | Descarga de un archivo privado con URL firmada (HMAC-SHA256) que vence en 5 minutos; siempre como adjunto. |
 
@@ -378,7 +389,8 @@ Los módulos no se llaman en círculo: cuando un módulo necesita reaccionar a l
 | `CitaReprogramada` / `CitaCancelada` | agenda | (ninguno aún) | Igual: el aviso al cliente se encola en la transacción del cambio | Misma transacción |
 | `InasistenciaMarcada` | agenda | clientes | Suma inasistencias a la proyección | Misma transacción |
 | `VentaRegistrada` | ventas | agenda, clientes | Cita «Atendida»; visitas, total gastado y barbero habitual | Misma transacción |
-| `VentaAnulada` | ventas | clientes | Resta la visita y el gasto; la última visita vigente viene en el evento | Misma transacción |
+| `VentaAnulada` | ventas | agenda, clientes | La cita cobrada vuelve a «Confirmada» (se puede cobrar de nuevo); resta la visita y el gasto (la última visita vigente viene en el evento) | Misma transacción |
 | `HorarioCambiado` / `BloqueoCreado` / `AusenciaRegistrada` | barberos | agenda | Si hay citas afectadas, crea un aviso para el administrador (el panel también las consulta antes de guardar con `POST /agenda/conflictos`) | Misma transacción |
+| `BarberoRetirado` | barberos | agenda | Sus citas pendientes desde la fecha del retiro generan un aviso para reasignarlas o pedir otra hora (como una ausencia sin fin) | Misma transacción |
 | `RespuestaWhatsAppRecibida` | notificaciones | agenda | «Confirmo» confirma la cita; «Cancelar cita» la cancela. Se publica al procesar el webhook en el worker, en la transacción que lo marca procesado | Cola |
 | `AccesoRevocado` | barberos | (ninguno) | La cuenta la desactiva `barberos` por la fachada `CuentasPersonal` de `identidad`, en la misma transacción. La agenda no necesita reaccionar: lee el estado del barbero (retiro, ausencias, citas en línea) al calcular la disponibilidad | Misma transacción |

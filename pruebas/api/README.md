@@ -4,8 +4,9 @@
 make coleccion             # o pruebas/api/correr-todo.sh
 ```
 
-Levanta un ambiente E2E nuevo (base en memoria, Mailpit, Gotenberg, WhatsApp simulado y reloj
-de pruebas), crea la primera administradora y corre la
+Construye la imagen con el código actual, levanta un ambiente E2E nuevo (base en memoria,
+Mailpit, Gotenberg, WhatsApp simulado y reloj de pruebas), crea la primera administradora y
+corre la
 [colección](../../docs/pruebas-manuales/diamante-barberia.postman_collection.json) en dos partes:
 las carpetas 00 a 20, un reinicio de la API (el límite de 10 inicios de sesión por IP cada 15
 minutos) y de la 21 al final. Deja el ambiente arriba para revisarlo:

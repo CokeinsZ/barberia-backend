@@ -12,6 +12,7 @@ pub(crate) mod publico;
 pub(crate) mod puertos;
 pub(crate) mod recordatorios;
 pub(crate) mod reserva;
+pub(crate) mod resumen_barbero;
 
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ use publico::Publico;
 use puertos::Puertos;
 use recordatorios::Recordatorios;
 use reserva::Reserva;
+use resumen_barbero::ResumenBarbero;
 
 #[derive(Debug)]
 pub(crate) struct CasosDeUso<C: Send> {
@@ -29,6 +31,7 @@ pub(crate) struct CasosDeUso<C: Send> {
     pub(crate) gestion: Gestion<C>,
     pub(crate) panel: Panel<C>,
     pub(crate) recordatorios: Recordatorios<C>,
+    pub(crate) resumen_barbero: ResumenBarbero<C>,
     /// Para construir los manejadores de eventos.
     pub(crate) p: Arc<Puertos<C>>,
 }
@@ -42,6 +45,7 @@ impl<C: Send> CasosDeUso<C> {
             gestion: Gestion { p: p.clone() },
             panel: Panel { p: p.clone() },
             recordatorios: Recordatorios { p: p.clone() },
+            resumen_barbero: ResumenBarbero { p: p.clone() },
             p,
         }
     }

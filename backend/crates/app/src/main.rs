@@ -18,6 +18,7 @@ mod migraciones;
 mod pruebas_e2e;
 mod salud;
 mod senales;
+mod sistema;
 mod tareas;
 mod worker;
 
@@ -26,9 +27,13 @@ mod pruebas_autorizacion;
 #[cfg(test)]
 mod pruebas_concurrencia;
 #[cfg(test)]
+mod pruebas_entrega2;
+#[cfg(test)]
 mod pruebas_postgres;
 #[cfg(test)]
 mod pruebas_reportes;
+#[cfg(test)]
+mod pruebas_robustez;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;

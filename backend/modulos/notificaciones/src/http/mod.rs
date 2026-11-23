@@ -198,8 +198,10 @@ async fn recibir_webhook(
             "La firma del webhook no es válida.",
         ));
     }
-    let carga: serde_json::Value = serde_json::from_slice(&cuerpo)
+    let mut carga: serde_json::Value = serde_json::from_slice(&cuerpo)
         .map_err(|_| ErrorHttp::solicitud_invalida("El cuerpo del webhook no es JSON."))?;
+    // Ya firmado: se guarda aunque traiga un carácter nulo (`jsonb` no lo admite).
+    plataforma::http::reemplazar_nulos(&mut carga);
     guardar_webhook(&e.pool, &carga, e.reloj.ahora())
         .await
         .map_err(interno)?;

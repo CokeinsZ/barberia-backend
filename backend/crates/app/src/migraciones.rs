@@ -107,7 +107,11 @@ mod pruebas {
                 // las migraciones se ordenan por versión).
                 "agenda",
                 // Fase 6: vistas publicadas para `reportes` (líneas y pagos de las ventas).
-                "ventas"
+                "ventas",
+                // Fase 8: una cita cuya venta se anuló se vuelve a cobrar (unicidad solo entre
+                // las ventas registradas) y su historial lo cuenta.
+                "ventas",
+                "agenda"
             ]
         );
     }

@@ -137,8 +137,15 @@ impl<C: Send + 'static> Ventas<C> {
                 format!("Agrega entre 1 y {MAX_SERVICIOS} servicios."),
             );
         }
+        // Los montos se validan aquí, antes de convertirlos a `Dinero`: más adelante un valor
+        // fuera de rango no puede volverse 0 en silencio.
         if s.propina < 0 {
             v.error("propina", "La propina no puede ser negativa.");
+        } else if s.propina > crate::dominio::MAX_PROPINA {
+            v.error("propina", "Revisa la propina: parece demasiado alta.");
+        }
+        if s.pagos.iter().any(|(_, monto)| *monto > Dinero::MAXIMO) {
+            v.error("pagos", "Revisa los montos de los pagos: uno es demasiado alto.");
         }
         v.terminar(|| ())?;
 
@@ -390,6 +397,7 @@ impl<C: Send + 'static> Ventas<C> {
                 &mut cx,
                 &VentaAnulada {
                     venta: id,
+                    anulada_por: usuario,
                     barbero: venta.barbero,
                     cliente: venta.cliente,
                     cita: venta.cita,

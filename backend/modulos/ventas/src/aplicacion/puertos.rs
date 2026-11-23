@@ -14,7 +14,8 @@ use nucleo::{Dinero, ErrorPersistencia, Porcentaje, Reloj, SolicitudPagina, Tran
 
 use crate::dominio::TipoDescuento;
 
-pub(crate) const RESTRICCION_CITA_COBRADA: &str = "venta_cita_uk";
+/// Índice único parcial: una sola venta *registrada* por cita (una anulada no cuenta).
+pub(crate) const RESTRICCION_CITA_COBRADA: &str = "venta_cita_vigente_uk";
 pub(crate) const RESTRICCION_CIERRE: &str = "cierre_caja_fecha_uk";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -189,6 +189,13 @@ impl<C: Send + 'static> Caja<C> {
                 "Un valor por método, sin negativos.",
             ));
         }
+        // Antes de convertirlo a `Dinero`: un conteo fuera de rango no puede volverse 0 en silencio.
+        if s.contado.iter().any(|(_, monto)| *monto > Dinero::MAXIMO) {
+            return Err(ErrorVentas::campo(
+                "contado",
+                "Revisa lo contado: un valor es demasiado alto.",
+            ));
+        }
         let mut cx = p.transacciones.iniciar().await?;
         let metodos = p.ventas.metodos_pago(&mut cx).await?;
         if s.contado.iter().any(|(m, _)| !metodos.iter().any(|x| x.id == *m)) {

@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Diamante Barbería · API (fases 0 a 6)",
+    "name": "Diamante Barbería · API (fases 0 a 8)",
     "description": "Pruebas manuales del backend: salud, identidad, negocio, auditoría, catálogo, barberos, archivos, agenda (landing, disponibilidad, reserva en línea, gestión por enlace y panel), verificación por WhatsApp, clientes, notificaciones (WhatsApp simulado, webhooks y avisos), trabajos, ventas y reportes (dashboard, resumen, liquidación, clientes y PDF con Gotenberg).\n\n**Preparación**\n\n1. `cp .env.example .env` y `make dev` (API en http://localhost:8080, Mailpit en http://localhost:8025; el WhatsApp simulado se lee en `GET /api/v1/_pruebas/mensajes`).\n2. `make administrador CORREO=laura@diamante.co NOMBRE=\"Laura Gómez\"`.\n3. Ejecute las carpetas en orden (01 → 29); cada petición tiene pruebas que dicen qué se espera.\n\nLas peticiones de carga de archivos (carpeta 13) piden elegir un archivo en la pestaña *Body*.\n\nLímites: 10 inicios de sesión por IP cada 15 minutos (las carpetas 01 a 20 usan exactamente 10; las 21 a 29, ocho) y 10 códigos de verificación por IP cada hora (las carpetas 17 a 20 usan 6). Antes de la carpeta 21, y para repetir el recorrido, reinicie los contadores con `docker compose restart api`. Las carpetas 01, 04 y 07 dependen de una base nueva (la primera administradora y Camila se crean una sola vez); las 09 a 28 se pueden repetir.\n\nLa carpeta 20 puede esperar hasta un minuto antes de pedir otro código (la espera entre códigos). La carpeta 29 deja la cuenta bloqueada 15 minutos.\n\nLas variables (`sesion`, `token_enlace`, `barbero_id`, `comprobante`…) se llenan solas con los scripts de las peticiones.\n\nLas peticiones a la API tienen desactivado el almacén de cookies de Postman (*Settings → Disable cookie jar*): la sesión viaja solo en el encabezado `Cookie` con la variable de cada petición, así «sin sesión» es de verdad sin sesión.\n\nWebhooks de WhatsApp (carpeta 22): se firman con la variable `secreto_whatsapp` (`secreto-de-desarrollo-whatsapp` con `make dev`; en el stack E2E use `secreto-de-pruebas-whatsapp` y `token_webhook` = `token-de-pruebas`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -11278,6 +11278,580 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "28b · Entrega 2 · Segmentos, «Mis citas» y vigilancia",
+      "item": [
+        {
+          "name": "Umbrales de los segmentos por defecto",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/configuracion-segmentos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Nuevo 1–2, Recurrente 3–5, Frecuente 6+, sin volver tras 60 días', () => pm.expect(pm.response.json()).to.eql({ max_visitas_nuevo: 2, max_visitas_recurrente: 5, dias_inactividad: 60 }));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Umbrales inválidos → 422",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/configuracion-segmentos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_visitas_nuevo\": 3,\n  \"max_visitas_recurrente\": 3,\n  \"dias_inactividad\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "pm.test('Errores en max_visitas_recurrente y dias_inactividad', () => {",
+                  "  const campos = pm.response.json().errores.map(e => e.campo);",
+                  "  pm.expect(campos).to.eql(['max_visitas_recurrente', 'dias_inactividad']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Cambiar los umbrales (Frecuente desde 3 visitas, sin volver tras 30 días)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/configuracion-segmentos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_visitas_nuevo\": 1,\n  \"max_visitas_recurrente\": 2,\n  \"dias_inactividad\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200 con los umbrales nuevos', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.eql({ max_visitas_nuevo: 1, max_visitas_recurrente: 2, dias_inactividad: 30 });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Indicadores de la base con los umbrales nuevos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes?por_pagina=100"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('meta: registrados = total y días de inactividad = 30', () => {",
+                  "  pm.expect(r.meta.registrados).to.eql(r.total);",
+                  "  pm.expect(r.meta.dias_inactividad).to.eql(30);",
+                  "});",
+                  "pm.test('Los segmentos suman los registrados', () => {",
+                  "  const s = r.meta.por_segmento;",
+                  "  pm.expect(s.sin_visitas + s.nuevo + s.recurrente + s.frecuente + s.inactivo).to.eql(r.meta.registrados);",
+                  "});",
+                  "pm.test('Los conteos cuadran con el segmento de cada cliente', () => {",
+                  "  if (r.total > r.datos.length) return;",
+                  "  const conteo = {};",
+                  "  r.datos.forEach(c => { conteo[c.segmento] = (conteo[c.segmento] || 0) + 1; });",
+                  "  ['sin_visitas', 'nuevo', 'recurrente', 'frecuente', 'inactivo'].forEach(s => pm.expect(r.meta.por_segmento[s]).to.eql(conteo[s] || 0));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Volver a los umbrales por defecto",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/configuracion-segmentos",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_visitas_nuevo\": 2,\n  \"max_visitas_recurrente\": 5,\n  \"dias_inactividad\": 60\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Los cambios de umbrales quedan en la auditoría",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/auditoria?entidad=configuracion_segmentos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Dos cambios (cambiar_segmentos) con el antes y el después', () => {",
+                  "  const datos = pm.response.json().datos;",
+                  "  pm.expect(datos.length).to.be.at.least(2);",
+                  "  datos.forEach(d => { pm.expect(d.accion).to.eql('cambiar_segmentos'); pm.expect(d.antes).to.have.property('dias_inactividad'); });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "El barbero no ve los umbrales → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes/configuracion-segmentos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "«Mis citas» del barbero (el suyo)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/resumen-barbero"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Es el suyo, con hoy, mañana y los próximos 7 días', () => {",
+                  "  pm.expect(r.barbero_id).to.eql(Number(pm.collectionVariables.get('barbero5_id') || pm.environment.get('barbero5_id') || r.barbero_id));",
+                  "  pm.expect(r.hoy).to.have.all.keys('fecha', 'tipo_dia', 'estado', 'citas', 'minutos_disponibles', 'minutos_ocupados', 'minutos_libres', 'agenda_llena');",
+                  "  pm.expect(r.proximos_7_dias.dias).to.have.lengthOf(7);",
+                  "  pm.expect(r.proximos_7_dias.dias[0]).to.eql(r.manana);",
+                  "});",
+                  "pm.test('Tiempo: libres = disponibles − ocupados (si trabaja)', () => {",
+                  "  [r.hoy].concat(r.proximos_7_dias.dias).forEach(d => {",
+                  "    if (d.minutos_libres !== null) pm.expect(d.minutos_libres).to.eql(d.minutos_disponibles - d.minutos_ocupados);",
+                  "  });",
+                  "});",
+                  "pm.test('Días con agenda llena = los días marcados', () => {",
+                  "  pm.expect(r.proximos_7_dias.dias_con_agenda_llena).to.eql(r.proximos_7_dias.dias.filter(d => d.agenda_llena).length);",
+                  "});",
+                  "pm.collectionVariables.set('resumen_barbero', JSON.stringify(r));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "«Mis citas» de un barbero (administradora)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/resumen-barbero?barbero_id={{barbero5_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('El mismo resumen que ve el barbero', () => pm.expect(pm.response.json()).to.eql(JSON.parse(pm.collectionVariables.get('resumen_barbero'))));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "«Mis citas» sin indicar el barbero (administradora) → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/resumen-barbero"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422 en barbero_id', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().errores[0].campo).to.eql('barbero_id');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Estado del sistema (métricas, cola, trabajos y alertas)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sistema/estado"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Estado y alertas', () => {",
+                  "  pm.expect(['ok', 'alerta']).to.include(r.estado);",
+                  "  pm.expect(r.estado === 'ok').to.eql(r.alertas.length === 0);",
+                  "  r.alertas.concat(r.informativos).forEach(a => pm.expect(a).to.have.all.keys('codigo', 'mensaje'));",
+                  "});",
+                  "pm.test('Métricas de la API de este proceso', () => {",
+                  "  pm.expect(r.api.desde_el_arranque.peticiones).to.be.above(0);",
+                  "  r.api.rutas_destacadas.forEach(x => pm.expect(x.ruta).to.match(/^[A-Z]+ (\\/|\\(sin ruta\\))/));",
+                  "});",
+                  "pm.test('Cola por canal y trabajos', () => {",
+                  "  ['correo', 'whatsapp'].forEach(c => pm.expect(r.cola[c]).to.have.property('configurado'));",
+                  "  pm.expect(r.trabajos).to.have.property('minutos_desde_el_ultimo');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "El barbero no ve el estado del sistema → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion_esteban}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sistema/estado"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Vigilancia para el monitor externo (sin sesión, solo códigos)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/salud/operacion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 ok o 503 con los códigos de las alertas', () => {",
+                  "  const r = pm.response.json();",
+                  "  if (pm.response.code === 200) { pm.expect(r).to.eql({ estado: 'ok' }); return; }",
+                  "  pm.expect(pm.response.code).to.eql(503);",
+                  "  pm.expect(Object.keys(r).sort()).to.eql(['alertas', 'estado']);",
+                  "  r.alertas.forEach(a => pm.expect(a).to.match(/^[a-z_]+$/));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Robustez: texto con el carácter nulo → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/clientes",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Ana\\u0000 Ruiz\",\n  \"celular\": \"3009990000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422 en nombre (no 500)', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().errores[0].campo).to.eql('nombre');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Robustez: fecha de otro milenio → 422",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/agenda/tablero?fecha=%2B262142-12-31"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422 en fecha (antes: la petición se caía)', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().errores[0].campo).to.eql('fecha');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
+        },
+        {
+          "name": "Robustez: un pago absurdo → 422 (nunca 500 ni un 0 en silencio)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "__Host-sesion={{sesion}}"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/ventas",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente\": { \"tipo\": \"ocasional\" },\n  \"barbero_id\": {{barbero5_id}},\n  \"servicio_ids\": [{{servicio_corte_id}}],\n  \"pagos\": [{ \"metodo_pago_id\": 1, \"monto\": 9223372036854775807 }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422 en «pagos»', () => {",
+                  "  pm.response.to.have.status(422);",
+                  "  pm.expect(pm.response.json().errores.map(e => e.campo)).to.include('pagos');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableCookies": true
+          }
         }
       ]
     },

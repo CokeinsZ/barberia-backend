@@ -22,10 +22,12 @@ pub struct VentaRegistrada {
 evento!(VentaRegistrada, "ventas.venta_registrada");
 
 /// Una venta anulada sale de los totales. Trae lo necesario para que `clientes` corrija sus
-/// métricas sin leer el esquema de ventas.
+/// métricas sin leer el esquema de ventas, y para que `agenda` devuelva su cita a «por cobrar».
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VentaAnulada {
     pub venta: IdVenta,
+    /// La administradora que la anuló (solo ella anula, RN-17), para el historial de la cita.
+    pub anulada_por: IdUsuario,
     pub barbero: IdBarbero,
     pub cliente: Option<IdCliente>,
     pub cita: Option<IdCita>,

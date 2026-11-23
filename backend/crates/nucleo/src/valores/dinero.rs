@@ -12,10 +12,18 @@ pub struct Dinero(i64);
 impl Dinero {
     pub const CERO: Dinero = Dinero(0);
 
-    /// Crea un valor en pesos. Falla si es negativo.
+    /// Tope de cordura de un valor: un billón de pesos. Ningún precio, pago o conteo real se le
+    /// acerca, y con él ninguna suma de valores que llegan de afuera se desborda en `i64`
+    /// (harían falta más de nueve millones de valores al tope).
+    pub const MAXIMO: i64 = 1_000_000_000_000;
+
+    /// Crea un valor en pesos. Falla si es negativo o si pasa de [`Dinero::MAXIMO`].
     pub fn pesos(valor: i64) -> Result<Self, ErrorValor> {
         if valor < 0 {
             return Err(ErrorValor::DineroNegativo(valor));
+        }
+        if valor > Self::MAXIMO {
+            return Err(ErrorValor::Desbordamiento);
         }
         Ok(Self(valor))
     }
@@ -73,6 +81,15 @@ mod pruebas {
     #[test]
     fn rechaza_valores_negativos() {
         assert_eq!(Dinero::pesos(-1), Err(ErrorValor::DineroNegativo(-1)));
+    }
+
+    #[test]
+    fn rechaza_valores_por_encima_del_tope() {
+        assert!(Dinero::pesos(Dinero::MAXIMO).is_ok());
+        assert_eq!(Dinero::pesos(Dinero::MAXIMO + 1), Err(ErrorValor::Desbordamiento));
+        assert_eq!(Dinero::pesos(i64::MAX), Err(ErrorValor::Desbordamiento));
+        // También al leerlo de un JSON.
+        assert!(serde_json::from_str::<Dinero>("9223372036854775807").is_err());
     }
 
     #[test]

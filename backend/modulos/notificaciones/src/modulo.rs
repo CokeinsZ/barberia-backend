@@ -7,7 +7,10 @@ use plataforma::base_datos::{TransaccionesPg, UnidadDeTrabajo};
 use plataforma::configuracion::{ConfiguracionSmtp, ConfiguracionWhatsApp};
 use sqlx::PgPool;
 
-use crate::api::{Avisos, BuzonSalida, ConsultaMensajes, ErrorNotificaciones, ResumenEnvio, ResumenWebhooks};
+use crate::api::{
+    Avisos, BuzonSalida, ConsultaMensajes, ErrorNotificaciones, EstadoCanal, EstadoCola, ResumenEnvio,
+    ResumenWebhooks,
+};
 use crate::aplicacion::{EnviarCorreosPendientes, EnviarWhatsAppPendientes, ProcesarWebhooks};
 use crate::infraestructura::postgres::{BuzonPg, RepositorioMensajesPg, RepositorioWebhooksPg, limpiar};
 use crate::infraestructura::smtp::TransporteSmtp;
@@ -126,6 +129,27 @@ impl ModuloNotificaciones {
             Some(caso) => Ok(caso.ejecutar().await?),
             None => Ok(ResumenEnvio::default()),
         }
+    }
+
+    /// Estado de la cola de salida y de los webhooks (RNF-OBS-02): lo usa la vigilancia.
+    pub async fn estado_cola(&self) -> Result<EstadoCola, ErrorNotificaciones> {
+        let (canales, (webhooks_pendientes, webhooks_atraso_min, webhooks_con_error_24h)) =
+            crate::infraestructura::postgres::estado_cola(&self.pool, self.reloj.ahora()).await?;
+        let canal = |nombre: &str, configurado: bool| EstadoCanal {
+            configurado,
+            ..canales
+                .iter()
+                .find(|(c, _)| c == nombre)
+                .map(|(_, estado)| *estado)
+                .unwrap_or_default()
+        };
+        Ok(EstadoCola {
+            correo: canal("correo", self.envia_correos()),
+            whatsapp: canal("whatsapp", self.envia_whatsapp()),
+            webhooks_pendientes,
+            webhooks_atraso_min,
+            webhooks_con_error_24h,
+        })
     }
 
     /// Procesa los webhooks recibidos (estados de entrega y respuestas de los clientes).

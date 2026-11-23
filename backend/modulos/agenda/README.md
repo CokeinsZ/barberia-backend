@@ -1,11 +1,12 @@
 # Módulo `agenda`
 
 El corazón del producto: disponibilidad, asignación de barbero, citas, gestión por enlace,
-tablero del panel y la landing pública (RF-PUB, RF-RES, RF-AGE, RF-CFG-02).
+tablero del panel, «Mis citas» del barbero y la landing pública (RF-PUB, RF-RES, RF-AGE,
+RF-PBA-02, RF-CFG-02).
 
 | | |
 |---|---|
-| Fase del plan | 3 ✅ · 4 (recordatorios, botones de WhatsApp y avisos) ✅ · 5 (cita «Atendida» al cobrar) ✅ |
+| Fase del plan | 3 ✅ · 4 (recordatorios, botones de WhatsApp y avisos) ✅ · 5 (cita «Atendida» al cobrar) ✅ · 8 («Mis citas» del barbero; la cita vuelve a cobrarse si se anula su venta; aviso al retirar a un barbero) ✅ |
 | Esquema de base de datos | `agenda` (ver `migraciones/`); `cita_sin_solape` (EXCLUDE) garantiza que dos citas vigentes de un barbero nunca se cruzan (RNF-INT-01) |
 | Fachadas que usa | `negocio` (datos públicos y calendario), `catalogo` (servicios), `barberos` (`EquipoAgenda`: franjas, ausencias, bloqueos y retiro), `clientes`, `verificacion` (comprobantes) y `notificaciones` (WhatsApp, avisos y estado de mensajes) |
 | Fachadas que ofrece | `CitasParaVentas` (la cita que se cobra, bloqueada) y `CitasDeClientes` (citas por atender de un cliente, para `clientes` por un adaptador en `app`) |
@@ -61,6 +62,7 @@ Funciones puras, probadas sin base de datos:
 | GET | `/agenda/disponibilidad/horas?servicio_id=&barbero_id=&fecha=` | Administrador | Variante del personal del motor |
 | POST | `/agenda/conflictos` | Administrador o el propio barbero | Citas afectadas por una `ausencia`, un `bloqueo` o un `horario_propuesto` (RF-BAR-13) |
 | GET | `/agenda/pendientes-de-cierre?fecha=` | Administrador | Citas ya terminadas sin cerrar |
+| GET | `/agenda/resumen-barbero?barbero_id=` | Personal | «Mis citas» (RF-PBA-02): hoy, mañana y los próximos 7 días con citas por estado, minutos disponibles, ocupados y libres, y si la agenda está llena. El barbero siempre recibe el suyo; la administradora indica `barbero_id` |
 | GET/PUT | `/agenda/configuracion` | Administrador | Reglas de agendamiento con las opciones del mockup; auditado |
 
 ## Reglas clave
@@ -73,6 +75,15 @@ Funciones puras, probadas sin base de datos:
 - El enlace de gestión es un token de 256 bits guardado como SHA-256; vence 30 días después de
   la cita y se renueva al reprogramar desde el panel.
 - Precio vigente al agendar; las cancelaciones nunca suman inasistencias (DA-17).
+- **Tiempo de un día** (`dominio/resumen.rs`, «Mis citas»): disponibles = franjas − bloqueos;
+  ocupados = lo que las citas vigentes (sin confirmar, confirmadas, en curso o atendidas) ocupan
+  de lo disponible (una cita que quedó dentro de un bloqueo no cuenta dos veces); libres = la
+  diferencia. **Agenda llena** = trabaja y el motor no encuentra ninguna hora para su servicio
+  más corto: 20 minutos sueltos no alcanzan para un corte de 30. Las mismas reglas de la
+  ocupación del dashboard (`reportes`).
+- **Anular la venta de una cita** la devuelve a «Confirmada» (evento `venta_anulada`): se puede
+  cobrar de nuevo, marcar la inasistencia o cancelar. Nunca tiene dos ventas vigentes (índice
+  único parcial en `ventas`).
 
 ## Recordatorios y respuestas (fase 4)
 
@@ -82,8 +93,9 @@ Funciones puras, probadas sin base de datos:
   el cliente no los desactivó. Un índice único deja uno solo por cita, tipo y hora (E2E-NOT-01).
 - **Botones del recordatorio**: «Confirmo» confirma una cita «Sin confirmar»; «Cancelar cita»
   la cancela como desde el enlace (tardía según el aviso mínimo) y envía el aviso.
-- **Avisos a la administradora**: si un cambio de horario, un bloqueo o una ausencia de un
-  barbero deja citas por fuera, se crea un aviso con las citas afectadas (RF-BAR-14, DA-08).
+- **Avisos a la administradora**: si un cambio de horario, un bloqueo, una ausencia o el retiro
+  de un barbero deja citas por fuera, se crea un aviso con las citas afectadas (RF-BAR-14,
+  DA-08). El retiro cuenta como una ausencia sin fin desde su fecha.
 
 ## Eventos que publica (crate `contratos`)
 
@@ -92,8 +104,10 @@ Funciones puras, probadas sin base de datos:
 ## Eventos que consume
 
 - `VentaRegistrada` (ventas): la cita queda «Atendida», con el evento en su historial.
+- `VentaAnulada` (ventas): si dejó la cita «Atendida», vuelve a «Confirmada» (`venta_anulada`).
 - `RespuestaWhatsAppRecibida` (notificaciones): confirma o cancela la cita.
-- `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada` (barberos): aviso si hay citas afectadas.
+- `HorarioCambiado`, `BloqueoCreado`, `AusenciaRegistrada`, `BarberoRetirado` (barberos): aviso
+  si hay citas afectadas.
 
 ## Estructura
 
@@ -101,8 +115,8 @@ Funciones puras, probadas sin base de datos:
 agenda/src/
 ├── api.rs                 # re-exportaciones públicas (DTO)
 ├── modulo.rs              # DependenciasAgenda y ModuloAgenda::rutas()
-├── dominio/               # disponibilidad (motor), cita (estados) y configuración
-├── aplicacion/            # publico, reserva, gestion y panel sobre Puertos<C>
+├── dominio/               # disponibilidad (motor), cita (estados), configuración y resumen (tiempo del día)
+├── aplicacion/            # publico, reserva, gestion, panel y resumen_barbero sobre Puertos<C>
 ├── infraestructura/       # RepositorioAgendaPg
 └── http/                  # rutas públicas y del panel; 409 con `alternativas`
 ```

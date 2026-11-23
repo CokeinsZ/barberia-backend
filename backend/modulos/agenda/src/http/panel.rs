@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use super::publico::{HorasParametros, ReprogramacionSolicitud};
 use super::{Estado, error_http, numero_opcional};
-use crate::aplicacion::dto::{CitaDto, DetalleCitaDto, HorasDelDiaDto, TableroDto};
+use crate::aplicacion::dto::{CitaDto, DetalleCitaDto, HorasDelDiaDto, ResumenAgendaBarberoDto, TableroDto};
 use crate::aplicacion::errores::ErrorAgenda;
 use crate::aplicacion::panel::{Propuesta, SolicitudCitaPanel};
 use crate::dominio::configuracion::ConfiguracionAgenda;
@@ -40,6 +40,7 @@ pub(crate) fn rutas<C: Send + 'static>() -> Router<Estado<C>> {
         .route("/agenda/disponibilidad/horas", get(disponibilidad::<C>))
         .route("/agenda/conflictos", post(conflictos::<C>))
         .route("/agenda/pendientes-de-cierre", get(pendientes::<C>))
+        .route("/agenda/resumen-barbero", get(resumen_barbero::<C>))
         .route(
             "/agenda/configuracion",
             get(configuracion::<C>).put(guardar_configuracion::<C>),
@@ -50,6 +51,13 @@ pub(crate) fn rutas<C: Send + 'static>() -> Router<Estado<C>> {
 #[serde(deny_unknown_fields)]
 struct FechaParametro {
     fecha: Option<NaiveDate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResumenBarberoParametros {
+    #[serde(default, deserialize_with = "numero_opcional")]
+    barbero_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +162,21 @@ async fn tablero<C: Send + 'static>(
     let fecha = p.fecha.unwrap_or_else(|| e.casos.panel.hoy());
     Ok(Json(
         e.casos.panel.tablero(&actor, fecha).await.map_err(error_http)?,
+    ))
+}
+
+/// «Mis citas» (RF-PBA-02): el barbero ve el suyo; la administradora indica `barbero_id`.
+async fn resumen_barbero<C: Send + 'static>(
+    State(e): State<Estado<C>>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Parametros(p): Parametros<ResumenBarberoParametros>,
+) -> Result<Json<ResumenAgendaBarberoDto>, ErrorHttp> {
+    Ok(Json(
+        e.casos
+            .resumen_barbero
+            .ejecutar(&actor, p.barbero_id.map(IdBarbero))
+            .await
+            .map_err(error_http)?,
     ))
 }
 

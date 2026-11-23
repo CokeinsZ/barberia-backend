@@ -14,7 +14,9 @@ use nucleo::{Pagina, SolicitudPagina};
 use plataforma::http::{ActorAutenticado, Entrada, ErrorHttp, Parametros};
 use serde::Deserialize;
 
-use crate::aplicacion::dto::{ClienteFichaDto, ClienteListadoDto, ClienteRapidoDto, SolicitudTitularDto};
+use crate::aplicacion::dto::{
+    ClienteFichaDto, ClienteRapidoDto, ConfiguracionSegmentosDto, ListadoClientesDto, SolicitudTitularDto,
+};
 use crate::aplicacion::{CasosDeUso, SolicitudCliente};
 
 type Casos<C> = State<Arc<CasosDeUso<C>>>;
@@ -23,6 +25,10 @@ pub(crate) fn rutas<C: Send + 'static>(casos: Arc<CasosDeUso<C>>) -> Router {
     Router::new()
         .route("/clientes", get(listar::<C>).post(crear::<C>))
         .route("/clientes/buscar", get(buscar::<C>))
+        .route(
+            "/clientes/configuracion-segmentos",
+            get(configuracion_segmentos::<C>).put(guardar_segmentos::<C>),
+        )
         .route("/clientes/{id}", get(ficha::<C>).put(editar::<C>))
         .route("/clientes/{id}/anonimizacion", post(anonimizar::<C>))
         .route(
@@ -43,6 +49,14 @@ struct ListadoParametros {
     segmento: Option<String>,
     pagina: Option<u32>,
     por_pagina: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SegmentosSolicitud {
+    max_visitas_nuevo: i64,
+    max_visitas_recurrente: i64,
+    dias_inactividad: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,7 +98,7 @@ async fn listar<C: Send + 'static>(
     State(casos): Casos<C>,
     ActorAutenticado(actor): ActorAutenticado,
     Parametros(p): Parametros<ListadoParametros>,
-) -> Result<Json<Pagina<ClienteListadoDto>>, ErrorHttp> {
+) -> Result<Json<ListadoClientesDto>, ErrorHttp> {
     let defecto = SolicitudPagina::default();
     let pagina = SolicitudPagina {
         pagina: p.pagina.unwrap_or(defecto.pagina),
@@ -92,6 +106,31 @@ async fn listar<C: Send + 'static>(
     };
     Ok(Json(
         casos.listar.ejecutar(&actor, p.q, p.segmento, pagina).await?,
+    ))
+}
+
+async fn configuracion_segmentos<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+) -> Result<Json<ConfiguracionSegmentosDto>, ErrorHttp> {
+    Ok(Json(casos.segmentos.consultar(&actor).await?))
+}
+
+async fn guardar_segmentos<C: Send + 'static>(
+    State(casos): Casos<C>,
+    ActorAutenticado(actor): ActorAutenticado,
+    Entrada(s): Entrada<SegmentosSolicitud>,
+) -> Result<Json<ConfiguracionSegmentosDto>, ErrorHttp> {
+    Ok(Json(
+        casos
+            .segmentos
+            .guardar(
+                &actor,
+                s.max_visitas_nuevo,
+                s.max_visitas_recurrente,
+                s.dias_inactividad,
+            )
+            .await?,
     ))
 }
 

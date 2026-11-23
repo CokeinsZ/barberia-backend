@@ -211,3 +211,73 @@ pub struct TableroDto {
     pub por_atender: usize,
     pub barberos: Vec<ColumnaTableroDto>,
 }
+
+/// Citas de un día (o de varios) por estado.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ConteoCitasDto {
+    /// Todas menos las canceladas.
+    pub total: usize,
+    pub sin_confirmar: usize,
+    pub confirmadas: usize,
+    pub en_curso: usize,
+    pub atendidas: usize,
+    pub no_asistio: usize,
+    pub canceladas: usize,
+    /// Sin confirmar, confirmadas o en curso.
+    pub por_atender: usize,
+}
+
+impl ConteoCitasDto {
+    pub(crate) fn sumar(&mut self, otro: &ConteoCitasDto) {
+        self.total += otro.total;
+        self.sin_confirmar += otro.sin_confirmar;
+        self.confirmadas += otro.confirmadas;
+        self.en_curso += otro.en_curso;
+        self.atendidas += otro.atendidas;
+        self.no_asistio += otro.no_asistio;
+        self.canceladas += otro.canceladas;
+        self.por_atender += otro.por_atender;
+    }
+}
+
+/// Un día de la agenda del barbero (RF-PBA-02).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiaBarberoDto {
+    pub fecha: NaiveDate,
+    /// `normal`, `festivo`, `cerrado` o `cierre_temprano`.
+    pub tipo_dia: &'static str,
+    /// `trabaja`, `no_trabaja` (día libre o cerrado), `retirado` o el tipo de ausencia
+    /// (`vacaciones`, `incapacidad`…).
+    pub estado: String,
+    pub citas: ConteoCitasDto,
+    /// Sus franjas del día menos los bloqueos.
+    pub minutos_disponibles: u32,
+    /// Lo que ocupan sus citas vigentes de lo disponible.
+    pub minutos_ocupados: u32,
+    /// Disponibles − ocupados; `null` si no trabaja ese día.
+    pub minutos_libres: Option<u32>,
+    /// Trabaja y no le queda ninguna hora de inicio libre para su servicio más corto (hoy,
+    /// desde la hora actual): las mismas reglas del agendamiento.
+    pub agenda_llena: bool,
+}
+
+/// Los días siguientes a hoy, con sus totales.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProximosDiasDto {
+    pub desde: NaiveDate,
+    pub hasta: NaiveDate,
+    pub citas: ConteoCitasDto,
+    pub dias_con_agenda_llena: usize,
+    pub dias: Vec<DiaBarberoDto>,
+}
+
+/// «Mis citas» del barbero: indicadores de hoy, mañana y los próximos 7 días (RF-PBA-02).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResumenAgendaBarberoDto {
+    pub barbero_id: IdBarbero,
+    pub nombre: String,
+    pub hoy: DiaBarberoDto,
+    pub manana: DiaBarberoDto,
+    /// De mañana al séptimo día después de hoy.
+    pub proximos_7_dias: ProximosDiasDto,
+}

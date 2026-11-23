@@ -285,4 +285,4 @@ Formato: *Dado* (estado inicial) · *Cuando* (acción) · *Entonces* (resultado 
 | Transversales | 4 | RNF de accesibilidad, responsive y SEO |
 | **Total** | **66** | |
 
-Los requisitos Must que no tienen escenario E2E propio (por ejemplo, RF-SIS-07 auditoría fuera de las anulaciones, o los RNF de integridad) se verifican con pruebas de integración del backend, como las 27 pruebas del esquema de base de datos.
+Los requisitos Must que no tienen escenario E2E propio (por ejemplo, RF-SIS-07 auditoría fuera de las anulaciones, o los RNF de integridad) se verifican con pruebas de integración del backend, como las 28 pruebas del esquema de base de datos.

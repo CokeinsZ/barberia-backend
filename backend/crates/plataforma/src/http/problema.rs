@@ -77,6 +77,17 @@ impl ErrorHttp {
         .con_detalle(detalle)
     }
 
+    /// 422 con los campos que no sirven (el mismo formato de las validaciones de los módulos).
+    pub fn validacion(errores: Vec<ErrorDeCampo>) -> Self {
+        let mut error = Self::nuevo(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validacion",
+            "Revisa los datos marcados.",
+        );
+        error.errores = errores;
+        error
+    }
+
     pub fn ruta_no_encontrada() -> Self {
         Self::nuevo(StatusCode::NOT_FOUND, "no_encontrado", "El recurso no existe.")
     }

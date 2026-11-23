@@ -239,8 +239,27 @@ de seguridad:
 
 ## 8. Vigilancia
 
-- **Salud**: `GET /api/salud/lista` (la base responde). Un monitor externo (UptimeRobot o
-  similar) cada 5 minutos.
+- **Salud**: `GET /api/salud/lista` (la base responde) y **`GET /api/salud/operacion`**
+  (RNF-OBS-02): `200 {"estado":"ok"}` o `503 {"estado":"alerta","alertas":[…]}`. Configure un
+  monitor externo (UptimeRobot o similar, gratuito) **sobre `/api/salud/operacion` cada 5
+  minutos**, con aviso por correo a quien administre el servidor: así se entera de una API
+  caída (no responde), de la base caída (`503 sin_base`) y de las alertas de la tabla. El
+  detalle (mensajes, métricas de latencia y errores, cola y trabajos) está en
+  `GET /api/v1/sistema/estado`, con la sesión de la administradora.
+
+  | Alerta | Qué significa | Qué hacer |
+  |---|---|---|
+  | `errores_del_servidor` | 5 o más respuestas `5xx` en 5 minutos | `docker logs APP-api-1 \| grep ERROR` (cada error trae su causa e `id` de solicitud); un PDF con `503` es Gotenberg caído |
+  | `api_lenta` | El 5 % más lento tardó más de 1 s (con 20 o más peticiones, sin los PDF) | `docker stats`; revisar la base (`pg_stat_activity`) y la memoria del VPS |
+  | `worker_detenido` | Hay trabajos o webhooks vencidos hace 10 minutos, o ningún trabajo terminó en 15 | `docker ps` y `docker logs APP-worker-1`; reiniciarlo (los recordatorios se reanudan solos) |
+  | `trabajos_atascados` | Un trabajo lleva más de 15 minutos en proceso | El worker lo recupera solo; si se repite, ver sus logs |
+  | `correos_atrasados` | Correos pendientes desde hace 15 minutos con SMTP configurado | Credenciales o servidor SMTP (`docker logs APP-worker-1`); salen solos al volver |
+  | `correo_sin_configurar` | Hay correos en cola y no hay SMTP | Configurar `DIAMANTE_SMTP_*` (sección 3): sin eso no llegan invitaciones ni recuperaciones |
+  | `whatsapp_atrasados` / `whatsapp_fallidos` | Con proveedor configurado: WhatsApp esperando 15 minutos, o 3 fallidos en una hora | Plantillas y cuenta de Meta; los avisos internos traen cada mensaje fallido |
+
+  Mientras no haya proveedor de WhatsApp (Meta), los WhatsApp esperan en la cola: el estado lo
+  muestra como **informativo** (`whatsapp_sin_proveedor`), no como alerta. Las métricas son del
+  proceso de la API (se reinician con él) y no cuentan las verificaciones de salud.
 - **Logs**: pestaña *Logs* de Dokploy o `docker logs -f APP-api-1` / `APP-worker-1`. Cada
   petición deja una línea con método, **plantilla** de la ruta (nunca la URL real: no hay tokens
   ni datos personales), estado, latencia e id de solicitud (`x-request-id`, también en la

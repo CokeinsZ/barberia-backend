@@ -10,7 +10,7 @@ use barberos::api::{BarberoAgenda, EquipoAgenda};
 use catalogo::api::{CatalogoServicios, ServicioResumen};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeDelta, Timelike, Utc};
 use clientes::api::ClientesAgenda;
-use negocio::api::{CalendarioNegocio, DatosPublicos, TipoDiaEspecialDto};
+use negocio::api::{CalendarioNegocio, DatosPublicos, DiaEspecialDto, TipoDiaEspecialDto};
 use notificaciones::api::{Avisos, BuzonSalida, ConsultaMensajes, PlantillaWhatsApp, WhatsAppSaliente};
 use nucleo::eventos::{BusEventos, EventoDominio};
 use nucleo::identificadores::{IdBarbero, IdCita, IdCliente, IdServicio, IdUsuario};
@@ -260,6 +260,19 @@ impl DatosMotor {
     }
 }
 
+/// Cómo trata el motor una fecha (RN-03) y su código para las respuestas: `festivo`, `cerrado`,
+/// `cierre_temprano` o `normal` (un cierre temprano sin hora se trata como normal).
+pub(crate) fn tipo_de_dia(especial: Option<&DiaEspecialDto>) -> (TipoDia, &'static str) {
+    match especial.map(|d| (d.tipo, d.hora_cierre)) {
+        Some((TipoDiaEspecialDto::Festivo, _)) => (TipoDia::Festivo, "festivo"),
+        Some((TipoDiaEspecialDto::Cerrado, _)) => (TipoDia::Cerrado, "cerrado"),
+        Some((TipoDiaEspecialDto::CierreTemprano, Some(hora))) => {
+            (TipoDia::CierreTemprano(hora), "cierre_temprano")
+        }
+        _ => (TipoDia::Normal, "normal"),
+    }
+}
+
 pub(crate) fn reglas(c: &ConfiguracionAgenda) -> Reglas {
     Reglas {
         anticipacion: TimeDelta::minutes(i64::from(c.anticipacion_minima_min)),
@@ -415,16 +428,8 @@ impl<C: Send> Puertos<C> {
             .calendario
             .dias_especiales(cx, desde, hasta)
             .await?
-            .into_iter()
-            .map(|d| {
-                let tipo = match (d.tipo, d.hora_cierre) {
-                    (TipoDiaEspecialDto::Festivo, _) => TipoDia::Festivo,
-                    (TipoDiaEspecialDto::Cerrado, _) => TipoDia::Cerrado,
-                    (TipoDiaEspecialDto::CierreTemprano, Some(hora)) => TipoDia::CierreTemprano(hora),
-                    (TipoDiaEspecialDto::CierreTemprano, None) => TipoDia::Normal,
-                };
-                (d.fecha, tipo)
-            })
+            .iter()
+            .map(|d| (d.fecha, tipo_de_dia(Some(d)).0))
             .collect();
         let barberos = equipo
             .into_iter()

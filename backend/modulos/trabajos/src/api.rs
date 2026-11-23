@@ -50,6 +50,22 @@ pub struct Programacion {
     pub periodicidad: Periodicidad,
 }
 
+/// Estado de la cola de trabajos (RNF-OBS-02). Con el worker en marcha, alguna tarea periódica
+/// termina al menos cada 5 minutos (los recordatorios): si pasa mucho más, el worker no está
+/// trabajando.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct EstadoTrabajos {
+    /// Trabajos cuya hora ya llegó y nadie ha tomado.
+    pub vencidos: i64,
+    /// Minutos desde la hora del vencido más antiguo.
+    pub atraso_min: Option<i64>,
+    /// Tomados hace más de 15 minutos y sin terminar.
+    pub atascados: i64,
+    pub fallidos_24h: i64,
+    /// Minutos desde que terminó el último trabajo (`null` si nunca ha corrido ninguno).
+    pub minutos_desde_el_ultimo: Option<i64>,
+}
+
 /// Resultado de una pasada del worker por la cola de trabajos.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct ResumenTrabajos {

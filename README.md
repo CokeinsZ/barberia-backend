@@ -5,7 +5,7 @@ agendamiento en línea, panel del administrador y panel del barbero.
 
 | Parte | Tecnología | Carpeta | Estado |
 |---|---|---|---|
-| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 a 7 listas: fundaciones, `identidad`, `negocio`, `auditoria`, `archivos`, `catalogo`, `barberos`, `clientes`, `verificacion`, `agenda`, `notificaciones` (correo, WhatsApp simulado hasta tener Meta, webhooks y avisos), `trabajos` (recordatorios y mantenimiento), `ventas` (caja y cierres), `reportes` (dashboard, liquidaciones y PDF) y endurecimiento para producción |
+| Backend | Rust + Axum, monolito modular | [`backend/`](backend/) | Fases 0 a 8 listas: fundaciones, `identidad`, `negocio`, `auditoria`, `archivos`, `catalogo`, `barberos`, `clientes` (con segmentos configurables), `verificacion`, `agenda` («Mis citas» del barbero), `notificaciones` (correo, WhatsApp simulado hasta tener Meta, webhooks y avisos), `trabajos` (recordatorios y mantenimiento), `ventas` (caja y cierres), `reportes` (dashboard, liquidaciones y PDF), endurecimiento para producción y vigilancia de la operación (métricas y alertas) |
 | Base de datos | PostgreSQL 18, un esquema por módulo | `backend/**/migraciones/` | Esquema completo (45 tablas) en migraciones por módulo |
 | Frontend | Astro + React | `frontend/` | Pendiente (fase 0, parte de frontend) |
 | Pruebas E2E | Playwright | `e2e/` | Pendiente |

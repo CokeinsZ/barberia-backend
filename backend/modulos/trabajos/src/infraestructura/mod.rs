@@ -151,3 +151,32 @@ pub(crate) async fn limpiar(pool: &PgPool, antes_de: DateTime<Utc>) -> Result<u6
         .map(|r| r.rows_affected())
         .map_err(a_error_persistencia)
 }
+
+/// Estado de la cola de trabajos a la hora `ahora` (RNF-OBS-02).
+pub(crate) async fn estado(
+    pool: &PgPool,
+    ahora: DateTime<Utc>,
+) -> Result<crate::api::EstadoTrabajos, ErrorPersistencia> {
+    let (vencidos, atraso_min, atascados, fallidos_24h, minutos_desde_el_ultimo): (i64, Option<i64>, i64, i64, Option<i64>) =
+        sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE estado = 'pendiente' AND ejecutar_en <= $1),
+                    (extract(epoch FROM $1 - min(ejecutar_en) FILTER (WHERE estado = 'pendiente' AND ejecutar_en <= $1)) / 60)::bigint,
+                    count(*) FILTER (WHERE estado = 'en_proceso' AND tomado_en < $1 - interval '15 minutes'),
+                    count(*) FILTER (WHERE estado = 'fallido' AND terminado_en >= $1 - interval '24 hours'),
+                    (SELECT (extract(epoch FROM $1 - max(terminado_en)) / 60)::bigint FROM trabajos.trabajo WHERE terminado_en IS NOT NULL)
+             FROM trabajos.trabajo
+             WHERE (estado = 'pendiente' AND ejecutar_en <= $1) OR estado = 'en_proceso'
+                OR (estado = 'fallido' AND terminado_en >= $1 - interval '24 hours')",
+        )
+        .bind(ahora)
+        .fetch_one(pool)
+        .await
+        .map_err(a_error_persistencia)?;
+    Ok(crate::api::EstadoTrabajos {
+        vencidos,
+        atraso_min,
+        atascados,
+        fallidos_24h,
+        minutos_desde_el_ultimo,
+    })
+}

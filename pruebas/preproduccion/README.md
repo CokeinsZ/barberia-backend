@@ -60,6 +60,7 @@ fíjela con `DIAMANTE_APP=<nombre en Dokploy>`. Sin `DIAMANTE_SSH`, esos pasos s
 | 10 | Mensajes (sin variables), avisos internos, webhook sin configurar |
 | 11 | Matriz de autorización: 48 rutas sin sesión, rutas de administradora con el barbero, cookie inventada |
 | 12 | Concurrencia: 8 reservas a la misma hora, 8 con «Cualquier barbero», reprogramaciones simultáneas, 10 ventas a la vez (tiquetes), cobro y anulación dobles, celular repetido, 10 ventas al mismo cliente, transiciones cruzadas, reserva en línea simultánea, ráfagas de 40 y 60 peticiones con latencias |
+| 12b | Entrega 2: umbrales de los segmentos (cambian el listado y los reportes al instante; se dejan como estaban), indicadores de la base contra el filtro por segmento, «Mis citas» del barbero, anular y volver a cobrar una cita, aviso al retirar a un barbero con citas (uno propio del paso), vigilancia (`/api/salud/operacion` y `/sistema/estado` sin alertas) y entradas hostiles por la red (carácter nulo, fechas de otro milenio, montos absurdos): nunca un `5xx` |
 | 13 | Límites de uso: 429 con `Retry-After` y `X-Forwarded-For` falso (al final: agota el límite público un minuto) |
 | 99 | Limpieza: cancela las citas pendientes de la corrida, retira a sus barberos, desactiva sus servicios y cierra las sesiones |
 
@@ -77,8 +78,9 @@ Los contadores de intentos viven en la memoria de la API: **un redespliegue los 
 
 ## Qué deja en la base
 
-Todo lo que crea lleva el sufijo `E2E <corrida>`: barberos (retirados al final), servicios
-(desactivados), clientes, citas (canceladas) y ventas (son historia: no se borran). Los correos
+Todo lo que crea lleva el sufijo `E2E <corrida>`: barberos (retirados al final; el del paso de
+retiro, desde el día siguiente), servicios (desactivados), clientes, citas (canceladas) y ventas
+(son historia: no se borran; una de cada corrida queda anulada y vuelta a cobrar). Los correos
 de invitación van a `@example.com`. Los WhatsApp quedan **en cola** mientras no haya credenciales
 de Meta: **antes de pasar a producción con Meta configurado, reinicie la base de preproducción**
 (borrar el volumen `…_db_datos`), o esos mensajes a números de prueba saldrían.

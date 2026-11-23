@@ -78,21 +78,38 @@ pub(crate) fn franjas_del_dia(
         .collect()
 }
 
-fn traslape(a: Intervalo, b: Intervalo) -> u32 {
-    a.1.min(b.1).saturating_sub(a.0.max(b.0))
+fn traslape(a: Intervalo, b: Intervalo) -> Option<Intervalo> {
+    let (inicio, fin) = (a.0.max(b.0), a.1.min(b.1));
+    (fin > inicio).then_some((inicio, fin))
 }
 
 fn dentro(intervalo: Intervalo, franjas: &[Intervalo]) -> u32 {
-    franjas.iter().map(|f| traslape(intervalo, *f)).sum()
+    franjas
+        .iter()
+        .filter_map(|f| traslape(intervalo, *f))
+        .map(|(inicio, fin)| fin - inicio)
+        .sum()
 }
 
 /// Ocupación del día (RN-21): minutos con citas ÷ minutos disponibles, descontando los
-/// bloqueos. Devuelve `(ocupados, disponibles)`.
+/// bloqueos. Devuelve `(ocupados, disponibles)`. Lo que una cita tiene dentro de un bloqueo (se
+/// bloqueó después de agendarla) no cuenta como ocupado: esos minutos ya no eran disponibles.
+/// Las mismas reglas que el tiempo libre de «Mis citas» (`agenda::dominio::resumen`).
 pub(crate) fn ocupacion(franjas: &[Intervalo], bloqueos: &[Intervalo], citas: &[Intervalo]) -> (u32, u32) {
     let total: u32 = franjas.iter().map(|(i, f)| f - i).sum();
     let bloqueado: u32 = bloqueos.iter().map(|b| dentro(*b, franjas)).sum();
     let disponibles = total.saturating_sub(bloqueado);
-    let ocupados: u32 = citas.iter().map(|c| dentro(*c, franjas)).sum();
+    let ocupados: u32 = citas
+        .iter()
+        .map(|c| {
+            let en_bloqueo: u32 = bloqueos
+                .iter()
+                .filter_map(|b| traslape(*c, *b))
+                .map(|t| dentro(t, franjas))
+                .sum();
+            dentro(*c, franjas).saturating_sub(en_bloqueo)
+        })
+        .sum();
     (ocupados.min(disponibles), disponibles)
 }
 
@@ -154,5 +171,8 @@ mod pruebas {
         ];
         assert_eq!(ocupacion(&lunes, &bloqueos, &citas), (120, 480));
         assert_eq!(ocupacion(&[], &[], &citas), (0, 0), "ausente o cerrado");
+        // Una cita que quedó dentro del bloqueo (se bloqueó después): no suma.
+        let con_cita_bloqueada = [citas[0], citas[1], (minutos(h("16:00")), minutos(h("16:30")))];
+        assert_eq!(ocupacion(&lunes, &bloqueos, &con_cita_bloqueada), (120, 480));
     }
 }

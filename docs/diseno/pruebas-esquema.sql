@@ -169,6 +169,11 @@ SELECT pg_temp.espera_error('SELECT pg_temp.venta_sin_lineas()', '23514', 'una v
 SELECT pg_temp.espera_error(
   $q$UPDATE ventas.venta SET estado = 'anulada' WHERE numero_ticket = 1$q$,
   '23514', 'anular una venta exige fecha, responsable y motivo');
+SELECT pg_temp.espera_error(
+  $q$INSERT INTO ventas.venta (numero_ticket, registrada_por, barbero_id, cita_id, porcentaje_comision)
+     SELECT 997, u.id, b.id, ci.id, 50 FROM identidad.usuario u, barberos.barbero b, agenda.cita ci
+     WHERE u.correo = 'laura@diamante.co' AND b.nombres = 'Santiago' AND ci.inicio = '2026-11-19 15:30-05'$q$,
+  '23505', 'una cita no tiene dos ventas vigentes');
 
 -- ---------- Funciones y vistas publicadas ----------
 SELECT estado = 'vacaciones' AS ok FROM barberos.estados_en('2026-11-20') e JOIN barberos.barbero b ON b.id = e.barbero_id WHERE b.nombres = 'Mateo' \gset

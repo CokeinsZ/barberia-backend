@@ -640,7 +640,7 @@ CREATE TYPE agenda.estado_cita            AS ENUM ('sin_confirmar', 'confirmada'
 CREATE TYPE agenda.origen_cita            AS ENUM ('en_linea', 'panel');
 CREATE TYPE agenda.motivo_cancelacion     AS ENUM ('solicitud_cliente', 'barbero_no_disponible', 'otro');
 CREATE TYPE agenda.evento_cita            AS ENUM ('creada', 'confirmada', 'iniciada', 'atendida', 'no_asistio',
-                                                   'cancelada', 'reprogramada', 'reasignada');
+                                                   'cancelada', 'reprogramada', 'reasignada', 'venta_anulada');
 CREATE TYPE agenda.proposito_mensaje      AS ENUM ('confirmacion', 'recordatorio_24h', 'recordatorio_2h', 'cancelacion', 'reprogramacion',
                                                    'recordatorio_manual', 'aviso_reprogramacion');
 CREATE TYPE agenda.politica_inasistencias AS ENUM ('confirmar_por_llamada', 'bloquear_reserva_en_linea', 'sin_restriccion');
@@ -804,7 +804,6 @@ CREATE TABLE ventas.venta (
   anulada_por          bigint REFERENCES identidad.usuario (id),
   motivo_anulacion     text,
   CONSTRAINT venta_ticket_uk UNIQUE (numero_ticket),
-  CONSTRAINT venta_cita_uk   UNIQUE (cita_id),
   CONSTRAINT venta_descuento_ck CHECK (
     (descuento_id IS NULL) = (motivo_descuento_id IS NULL)
     AND (descuento_id IS NULL) = (descuento_valor = 0)
@@ -815,6 +814,8 @@ CREATE TABLE ventas.venta (
     AND (anulada_en IS NULL) = (motivo_anulacion IS NULL)
   )
 );
+-- Una cita no tiene dos ventas vigentes; si su venta se anula, se puede volver a cobrar.
+CREATE UNIQUE INDEX venta_cita_vigente_uk ON ventas.venta (cita_id) WHERE estado = 'registrada';
 CREATE INDEX venta_fecha_idx         ON ventas.venta (fecha_operacion) WHERE estado = 'registrada';
 CREATE INDEX venta_barbero_fecha_idx ON ventas.venta (barbero_id, fecha_operacion) WHERE estado = 'registrada';
 CREATE INDEX venta_cliente_fecha_idx ON ventas.venta (cliente_id, fecha_operacion DESC) WHERE cliente_id IS NOT NULL;

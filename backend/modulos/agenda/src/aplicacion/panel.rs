@@ -15,12 +15,12 @@ use super::dto::{CitaDto, ColumnaTableroDto, DetalleCitaDto, RangoHorasDto, Rang
 use super::errores::ErrorAgenda;
 use super::puertos::{
     CitaGuardada, EventoCita, FiltroCitas, NuevaCita, Puertos, RESTRICCION_SOLAPE, a_agendable, alternativas,
-    inicio_del_dia, local,
+    inicio_del_dia, local, tipo_de_dia,
 };
 use super::reserva::VIGENCIA_ENLACE_DESPUES;
 use crate::dominio::cita::{EstadoCita, cancelacion_tardia, puede_marcar_inasistencia};
 use crate::dominio::configuracion::ConfiguracionAgenda;
-use crate::dominio::disponibilidad::{Franja, Modo, TipoDia, franjas_del_dia};
+use crate::dominio::disponibilidad::{Franja, Modo, franjas_del_dia};
 
 fn solo_administrador(actor: &Actor) -> Result<(), ErrorAgenda> {
     if actor.es_administrador() {
@@ -118,14 +118,7 @@ impl<C: Send + 'static> Panel<C> {
             .await?;
         let dtos = p.dtos(&mut cx, citas, true).await?;
         p.transacciones.confirmar(cx).await?;
-        let (tipo, tipo_dia) = match especial.map(|d| (d.tipo, d.hora_cierre)) {
-            Some((negocio::api::TipoDiaEspecialDto::Festivo, _)) => (TipoDia::Festivo, "festivo"),
-            Some((negocio::api::TipoDiaEspecialDto::Cerrado, _)) => (TipoDia::Cerrado, "cerrado"),
-            Some((negocio::api::TipoDiaEspecialDto::CierreTemprano, Some(h))) => {
-                (TipoDia::CierreTemprano(h), "cierre_temprano")
-            }
-            _ => (TipoDia::Normal, "normal"),
-        };
+        let (tipo, tipo_dia) = tipo_de_dia(especial.as_ref());
         let mut columnas: Vec<ColumnaTableroDto> = equipo
             .iter()
             .map(|b| {

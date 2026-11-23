@@ -105,24 +105,25 @@ async fn ejecutar(app: &Router, c: &Caso, sesion: Option<&str>) -> (StatusCode, 
     }
 }
 
-/// Rutas que declara el código (`.route("…"` en `modulos/*/src/http/*.rs`).
+/// Rutas que declara el código bajo `/api/v1` (`.route("…"` en `modulos/*/src/http/*.rs` y en
+/// las rutas propias de `app`, como la vigilancia; las absolutas, como `/api/salud/…`, no).
 fn rutas_del_codigo() -> BTreeSet<String> {
-    let raiz = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modulos");
+    let manifiesto = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut archivos = vec![manifiesto.join("src/sistema.rs")];
+    for modulo in std::fs::read_dir(manifiesto.join("../../modulos")).unwrap() {
+        if let Ok(http) = std::fs::read_dir(modulo.unwrap().path().join("src/http")) {
+            archivos.extend(http.map(|a| a.unwrap().path()));
+        }
+    }
     let mut rutas = BTreeSet::new();
-    for modulo in std::fs::read_dir(&raiz).unwrap() {
-        let http = modulo.unwrap().path().join("src/http");
-        let Ok(archivos) = std::fs::read_dir(&http) else {
-            continue;
-        };
-        for archivo in archivos {
-            let texto = std::fs::read_to_string(archivo.unwrap().path()).unwrap();
-            for (i, _) in texto.match_indices(".route(") {
-                let resto = texto[i + ".route(".len()..].trim_start();
-                if let Some(sin_comilla) = resto.strip_prefix('"') {
-                    let ruta = &sin_comilla[..sin_comilla.find('"').unwrap()];
-                    if !ruta.starts_with("/_pruebas") {
-                        rutas.insert(ruta.to_owned());
-                    }
+    for archivo in archivos {
+        let texto = std::fs::read_to_string(archivo).unwrap();
+        for (i, _) in texto.match_indices(".route(") {
+            let resto = texto[i + ".route(".len()..].trim_start();
+            if let Some(sin_comilla) = resto.strip_prefix('"') {
+                let ruta = &sin_comilla[..sin_comilla.find('"').unwrap()];
+                if !ruta.starts_with("/_pruebas") && !ruta.starts_with("/api/") {
+                    rutas.insert(ruta.to_owned());
                 }
             }
         }
@@ -737,6 +738,20 @@ async fn matriz_de_autorizacion_de_todas_las_rutas() {
         ),
         caso(
             M::GET,
+            "/clientes/configuracion-segmentos",
+            "/clientes/configuracion-segmentos".into(),
+            Admin,
+            Ninguno,
+        ),
+        caso(
+            M::PUT,
+            "/clientes/configuracion-segmentos",
+            "/clientes/configuracion-segmentos".into(),
+            Admin,
+            Json(json!({ "max_visitas_nuevo": 2, "max_visitas_recurrente": 5, "dias_inactividad": 60 })),
+        ),
+        caso(
+            M::GET,
             "/clientes/{id}",
             format!("/clientes/{cliente}"),
             Admin,
@@ -886,12 +901,28 @@ async fn matriz_de_autorizacion_de_todas_las_rutas() {
             Admin,
             Ninguno,
         ),
+        // El barbero siempre recibe el suyo (aunque pida otro): como «Lo que llevas hoy».
+        caso(
+            M::GET,
+            "/agenda/resumen-barbero",
+            format!("/agenda/resumen-barbero?barbero_id={mateo}"),
+            Personal,
+            Ninguno,
+        ),
         caso(
             M::PUT,
             "/agenda/configuracion",
             "/agenda/configuracion".into(),
             Admin,
             Json(configuracion_agenda),
+        ),
+        // Vigilancia (RNF-OBS-02).
+        caso(
+            M::GET,
+            "/sistema/estado",
+            "/sistema/estado".into(),
+            Admin,
+            Ninguno,
         ),
         // Notificaciones.
         caso(M::GET, "/avisos", "/avisos".into(), Admin, Ninguno),

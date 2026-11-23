@@ -14,6 +14,20 @@ está implementado y qué prueba automática lo respalda.
      vencen a los 30 días de iniciarse (V3.3.2).
   3. Faltaban las cabeceras de seguridad en la API (HSTS incluido, al retirar Caddy), los límites
      de uso generales y una traza de peticiones sin datos personales (V14.4, V11.1.4, V7.1).
+- **Corregido en la fase 8** (prueba de entradas hostiles sobre todas las rutas, V5):
+  1. El carácter nulo en cualquier texto daba `500` (PostgreSQL no lo admite), también sin
+     sesión: en el inicio de sesión y en la reserva en línea.
+  2. Una fecha como `+262142-12-31` tumbaba la petición con un pánico de chrono en la
+     disponibilidad pública, la agenda y el tablero; un pánico, además, cortaba la conexión.
+  3. Un pago de `9223372036854775807` desbordaba la suma de los pagos (pánico; en producción,
+     una suma que da la vuelta).
+  4. Un webhook firmado con el carácter nulo daba `500` y Meta lo habría reintentado por días.
+  5. Al poner el tope de `Dinero`, una propina o un conteo del cierre por encima del tope se
+     convertían en 0 en silencio (`unwrap_or(CERO)`): una venta quedaba sin su propina. Lo
+     encontró la prueba nueva en la misma revisión; ahora se validan antes de convertirlos.
+  6. En la vigilancia nueva, cada método HTTP inventado (`RARO1`, `RARO2`…) creaba una clave en
+     las métricas por ruta: cualquiera, sin sesión, podía llenar la memoria de la API. Ahora los
+     métodos no estándar cuentan como `OTRO` y las rutas distintas tienen tope (300).
 - **Pendiente** (sección final): revisar contraseñas contra listas de contraseñas filtradas
   (V2.1.7), el reenvío de la IP del cliente desde el servidor del frontend y la política de
   contenido (CSP) de las páginas, que es del frontend.
@@ -66,6 +80,7 @@ está implementado y qué prueba automática lo respalda.
 | Control | Implementación |
 |---|---|
 | Entradas tipadas y estrictas | `serde` con `deny_unknown_fields`; parámetros de consulta desconocidos → `400`; validación de dominio con errores por campo (`422`) |
+| Revisión común de toda entrada | Los extractores compartidos (`Entrada`, `Parametros`, `Formulario`) rechazan con `422` el carácter nulo y las fechas fuera de los años 1900–2999, en cualquier campo y en cualquier ruta, también en las que se agreguen; `Dinero` no pasa de un billón. Prueba: `ninguna_entrada_hostil_produce_un_error_del_servidor` (más de 7.600 peticiones: cada campo de cada ruta con 18 valores hostiles, cada parámetro, cada identificador y cuerpos rotos; ningún `5xx`, todo error en *Problem Details*) |
 | SQL sin inyección | Consultas parametrizadas (`sqlx`); el SQL dinámico solo concatena constantes del propio archivo (`AssertSqlSafe`) |
 | Salida | La API responde JSON. El HTML de los PDF escapa todo dato (`pdf::escapar`, probado con `<script>`) y Gotenberg no ejecuta JavaScript |
 | Archivos | Tipo detectado por el contenido, no por el nombre; límites de tamaño por ruta (foto 6 MB, documento 11 MB); claves de archivo validadas (sin `..`) |
@@ -74,7 +89,8 @@ está implementado y qué prueba automática lo respalda.
 
 | Control | Implementación | Prueba |
 |---|---|---|
-| Errores sin detalles internos | *Problem Details* (RFC 9457); los `500` dicen «Ocurrió un error inesperado» y la causa va solo al log | unitarias de `plataforma` |
+| Errores sin detalles internos | *Problem Details* (RFC 9457); los `500` dicen «Ocurrió un error inesperado» y la causa va solo al log. Un pánico (error de programación) responde `500` en el mismo formato y queda en el log, sin cortar la conexión (`CatchPanicLayer`) | unitarias de `plataforma`; robustez |
+| Métricas y alertas (RNF-OBS-02) | Errores del servidor, latencia, cola de mensajes, webhooks y worker; `GET /api/salud/operacion` para el monitor externo (solo códigos) y `GET /api/v1/sistema/estado` para la administradora | `vigilancia_de_la_operacion`, unitarias de las alertas |
 | Logs sin datos personales ni secretos | Cada petición registra la **plantilla** de la ruta (`/publico/citas/gestion/{token}`), nunca la URL: ni tokens de gestión, ni búsquedas (`?q=`), ni firmas (`?firma=`). El log de acceso de Traefik es del servidor: el runbook explica cómo omitir la ruta (verificado: sin tokens ni celulares) | `la_traza_lleva_la_plantilla_de_la_ruta_y_no_la_url`; en el recorrido E2E, 0 tokens o celulares en los logs |
 | Secretos que no aparecen en `Debug` | `Secreto`, `ClaveCifrado` | unitarias de configuración |
 | Auditoría inalterable | `auditoria.registro` solo admite inserciones (trigger); cubre exportaciones de reportes y acciones sensibles | pruebas de esquema y E2E |

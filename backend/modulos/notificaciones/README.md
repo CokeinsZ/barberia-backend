@@ -42,8 +42,10 @@ forma permanente.
   registro en Meta; devuelve el reto solo con `DIAMANTE_WHATSAPP_TOKEN_VERIFICACION`.
 - `POST /api/v1/webhooks/whatsapp`: verifica `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo
   exacto con `DIAMANTE_WHATSAPP_SECRETO_APP`; `401 firma_invalida` si no coincide, sin guardar
-  nada: RNF-SEG-10), guarda el evento y responde `200`. El worker lo procesa después, cada
-  evento en su propia transacción:
+  nada: RNF-SEG-10), guarda el evento y responde `200`. Si un texto del evento trae el carácter
+  nulo (`jsonb` no lo admite), se guarda con `�` en su lugar: un error haría que Meta lo
+  reintentara por días. El worker lo procesa después, cada evento en su propia transacción
+  (si uno falla, queda marcado con su error y no se reintenta en bucle):
   - **Estados de entrega** (`sent`, `delivered`, `read`, `failed`): solo avanzan (pueden llegar
     desordenados); un `failed` de un mensaje de cita crea un aviso.
   - **Botones** («Confirmo», «Cancelar cita»): publica `RespuestaWhatsAppRecibida` con el id del
@@ -58,6 +60,11 @@ Sin los dos secretos configurados, el webhook responde 404.
 | GET | `/avisos?no_leidos=true&pagina=` | Avisos internos: mensajes fallidos y citas afectadas por cambios de horario, bloqueos o ausencias |
 | POST | `/avisos/{id}/leido` | Idempotente: conserva la primera lectura |
 | GET | `/mensajes?destinatario=&estado=&canal=&plantilla=&pagina=` | Registro de mensajes con su estado, sin variables (RF-NOT-07) |
+
+**Vigilancia** (RNF-OBS-02): `ModuloNotificaciones::estado_cola()` da, por canal, si está
+configurado, los pendientes cuya hora ya llegó, el atraso del más antiguo y los enviados y
+fallidos (24 h y última hora), y el estado de los webhooks. Lo usan `GET /api/salud/operacion` y
+`GET /api/v1/sistema/estado` (en `app`).
 
 | Plantilla de correo | Uso |
 |---|---|

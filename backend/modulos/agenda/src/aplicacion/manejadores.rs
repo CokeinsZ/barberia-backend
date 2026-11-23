@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use contratos::barberos::{AusenciaRegistrada, BloqueoCreado, HorarioCambiado};
+use contratos::barberos::{AusenciaRegistrada, BarberoRetirado, BloqueoCreado, HorarioCambiado};
 use contratos::notificaciones::RespuestaWhatsAppRecibida;
-use contratos::ventas::VentaRegistrada;
+use contratos::ventas::{VentaAnulada, VentaRegistrada};
 use notificaciones::api::{NuevoAviso, TipoAviso};
+use nucleo::TipoActor;
 use nucleo::eventos::{ErrorDeManejador, ManejadorEvento};
 use nucleo::identificadores::IdBarbero;
 use serde_json::json;
@@ -220,6 +221,35 @@ impl<C: Send + 'static> ManejadorEvento<AusenciaRegistrada, C> for AlCambiarDisp
     }
 }
 
+/// Hallado en la búsqueda de errores de la fase 8: retirar a un barbero dejaba sus citas
+/// futuras huérfanas y sin aviso. Un retiro es una ausencia sin fin desde su fecha.
+#[async_trait]
+impl<C: Send + 'static> ManejadorEvento<BarberoRetirado, C> for AlCambiarDisponibilidad<C> {
+    fn nombre(&self) -> &'static str {
+        "agenda.al_retirar_barbero"
+    }
+
+    async fn manejar(&self, cx: &mut C, evento: &BarberoRetirado) -> Result<(), ErrorDeManejador> {
+        // Diez años: más que cualquier cita que se pueda agendar (y lejos de los límites del calendario).
+        let hasta = evento
+            .fecha
+            .checked_add_days(chrono::Days::new(3_650))
+            .unwrap_or(evento.fecha);
+        self.avisar_si_hay_citas(
+            cx,
+            evento.barbero,
+            Propuesta::Ausencia {
+                desde: evento.fecha,
+                hasta,
+            },
+            TipoAviso::AusenciaConCitas,
+            "el retiro",
+        )
+        .await
+        .map_err(ErrorDeManejador::nuevo)
+    }
+}
+
 /// Registrar la venta de una cita la deja «Atendida» (RN-16, RF-VEN-09), en la misma
 /// transacción de la venta: si la cita ya no está por atender, la venta tampoco queda.
 pub(crate) struct AlRegistrarVenta<C: Send> {
@@ -257,6 +287,54 @@ impl<C: Send + 'static> ManejadorEvento<VentaRegistrada, C> for AlRegistrarVenta
             barbero_previo: None,
             tardio: false,
             detalle: Some(format!("Venta registrada (id {})", evento.venta.0)),
+            ahora: p.reloj.ahora(),
+        };
+        p.citas
+            .registrar_evento(cx, &historial)
+            .await
+            .map_err(ErrorDeManejador::nuevo)
+    }
+}
+
+/// Anular la venta que dejó una cita «Atendida» la devuelve a «Confirmada», en la misma
+/// transacción de la anulación: se puede volver a cobrar (p. ej., con el servicio correcto),
+/// marcar la inasistencia o cancelar, y vuelve a aparecer en las pendientes de cierre si su hora
+/// ya pasó. El historial lo cuenta (`venta_anulada`).
+pub(crate) struct AlAnularVenta<C: Send> {
+    pub(crate) p: Arc<Puertos<C>>,
+}
+
+#[async_trait]
+impl<C: Send + 'static> ManejadorEvento<VentaAnulada, C> for AlAnularVenta<C> {
+    fn nombre(&self) -> &'static str {
+        "agenda.al_anular_venta"
+    }
+
+    async fn manejar(&self, cx: &mut C, evento: &VentaAnulada) -> Result<(), ErrorDeManejador> {
+        let Some(id) = evento.cita else {
+            return Ok(());
+        };
+        let p = &self.p;
+        let cita = p.cita(cx, id, true).await.map_err(ErrorDeManejador::nuevo)?;
+        if cita.estado != EstadoCita::Atendida {
+            return Ok(());
+        }
+        p.citas
+            .cambiar_estado(cx, id, EstadoCita::Confirmada)
+            .await
+            .map_err(ErrorDeManejador::nuevo)?;
+        let historial = EventoCita {
+            cita: id,
+            evento: "venta_anulada",
+            actor: TipoActor::Administrador,
+            usuario: Some(evento.anulada_por),
+            inicio_previo: None,
+            barbero_previo: None,
+            tardio: false,
+            detalle: Some(format!(
+                "Se anuló la venta (id {}): la cita vuelve a quedar por cobrar",
+                evento.venta.0
+            )),
             ahora: p.reloj.ahora(),
         };
         p.citas

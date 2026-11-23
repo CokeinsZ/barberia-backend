@@ -9,9 +9,9 @@ use barberos::api::EquipoAgenda;
 use catalogo::api::CatalogoServicios;
 use chrono::{DateTime, Utc};
 use clientes::api::ClientesAgenda;
-use contratos::barberos::{AusenciaRegistrada, BloqueoCreado, HorarioCambiado};
+use contratos::barberos::{AusenciaRegistrada, BarberoRetirado, BloqueoCreado, HorarioCambiado};
 use contratos::notificaciones::RespuestaWhatsAppRecibida;
-use contratos::ventas::VentaRegistrada;
+use contratos::ventas::{VentaAnulada, VentaRegistrada};
 use negocio::api::{CalendarioNegocio, DatosPublicos};
 use notificaciones::api::{Avisos, BuzonSalida, ConsultaMensajes};
 use nucleo::Reloj;
@@ -23,7 +23,9 @@ use verificacion::api::Comprobantes;
 use crate::api::{ErrorAgenda, ResumenRecordatorios};
 use crate::aplicacion::CasosDeUso;
 use crate::aplicacion::fachada::FachadaCitas;
-use crate::aplicacion::manejadores::{AlCambiarDisponibilidad, AlRegistrarVenta, AlResponderWhatsApp};
+use crate::aplicacion::manejadores::{
+    AlAnularVenta, AlCambiarDisponibilidad, AlRegistrarVenta, AlResponderWhatsApp,
+};
 use crate::aplicacion::puertos::Puertos;
 use crate::http::{self, Estado};
 use crate::infraestructura::postgres::{RepositorioAgendaPg, limpiar};
@@ -90,7 +92,9 @@ impl ModuloAgenda {
         bus.suscribir::<HorarioCambiado, _>(AlCambiarDisponibilidad { p: p.clone() });
         bus.suscribir::<BloqueoCreado, _>(AlCambiarDisponibilidad { p: p.clone() });
         bus.suscribir::<AusenciaRegistrada, _>(AlCambiarDisponibilidad { p: p.clone() });
+        bus.suscribir::<BarberoRetirado, _>(AlCambiarDisponibilidad { p: p.clone() });
         bus.suscribir::<VentaRegistrada, _>(AlRegistrarVenta { p: p.clone() });
+        bus.suscribir::<VentaAnulada, _>(AlAnularVenta { p: p.clone() });
     }
 
     /// Fachada para `ventas`: la cita que se cobra.

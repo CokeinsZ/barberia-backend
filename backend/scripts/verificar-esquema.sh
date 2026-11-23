@@ -45,10 +45,10 @@ echo "    Iguales: $(grep -c '^CREATE TABLE' "$TMP/migraciones.sql") tablas, $(g
 echo "4/4 Ejecutando las pruebas de reglas de negocio sobre la base migrada…"
 salida="$(psql "$(url "$B")" -q -f "$RAIZ/docs/diseno/pruebas-esquema.sql" 2>&1)"
 ok="$(grep -c 'OK  ' <<<"$salida" || true)"
-if grep -q 'FALLA' <<<"$salida" || [ "$ok" -ne 27 ]; then
+if grep -q 'FALLA' <<<"$salida" || [ "$ok" -ne 28 ]; then
   echo "$salida" | grep -E 'OK|FALLA|ERROR' >&2
-  echo "Las pruebas del esquema fallaron ($ok de 27)." >&2
+  echo "Las pruebas del esquema fallaron ($ok de 28)." >&2
   exit 1
 fi
-echo "    $ok de 27 pruebas superadas."
+echo "    $ok de 28 pruebas superadas."
 echo "El esquema de las migraciones coincide con el diseño."

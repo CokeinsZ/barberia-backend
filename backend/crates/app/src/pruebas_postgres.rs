@@ -1657,10 +1657,10 @@ async fn reserva_en_linea_y_agenda_de_punta_a_punta() {
 // Fase 4: WhatsApp simulado, recordatorios, webhooks firmados, avisos y trabajos
 // ---------------------------------------------------------------------------------------------
 
-const SECRETO_APP: &str = "secreto-de-pruebas-whatsapp";
+pub(crate) const SECRETO_APP: &str = "secreto-de-pruebas-whatsapp";
 
 /// Webhook de Meta con el cuerpo exacto y, si se da, la firma.
-async fn webhook(app: &Router, cuerpo: &Value, firma: Option<String>) -> Respuesta {
+pub(crate) async fn webhook(app: &Router, cuerpo: &Value, firma: Option<String>) -> Respuesta {
     let bytes = serde_json::to_vec(cuerpo).unwrap();
     let mut peticion = Request::builder()
         .method(Method::POST)
@@ -1683,7 +1683,7 @@ async fn webhook(app: &Router, cuerpo: &Value, firma: Option<String>) -> Respues
     }
 }
 
-fn firmado(cuerpo: &Value) -> Option<String> {
+pub(crate) fn firmado(cuerpo: &Value) -> Option<String> {
     Some(plataforma::seguridad::firma_webhook(
         SECRETO_APP.as_bytes(),
         &serde_json::to_vec(cuerpo).unwrap(),
@@ -1691,7 +1691,7 @@ fn firmado(cuerpo: &Value) -> Option<String> {
 }
 
 /// Respuesta de un cliente a un botón del mensaje `wamid` (formato de Meta).
-fn boton(wamid: &str, carga: &str) -> Value {
+pub(crate) fn boton(wamid: &str, carga: &str) -> Value {
     json!({ "object": "whatsapp_business_account", "entry": [{ "id": "WABA", "changes": [{ "field": "messages",
     "value": { "messaging_product": "whatsapp", "messages": [{
         "from": "573001112233", "id": format!("wamid.respuesta.{carga}"), "timestamp": "1763500000", "type": "button",

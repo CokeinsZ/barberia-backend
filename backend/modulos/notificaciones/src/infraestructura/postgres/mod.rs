@@ -582,3 +582,56 @@ pub(crate) async fn mensajes_recientes(
     .await
     .map_err(a_error_persistencia)
 }
+
+/// Estado de la cola y de los webhooks a la hora `ahora` (RNF-OBS-02). Recorre solo lo pendiente
+/// y lo de las últimas 24 horas.
+pub(crate) async fn estado_cola(
+    pool: &PgPool,
+    ahora: DateTime<Utc>,
+) -> Result<(Vec<(String, crate::api::EstadoCanal)>, (i64, Option<i64>, i64)), ErrorPersistencia> {
+    let canales: Vec<(String, i64, Option<i64>, i64, i64, i64)> = sqlx::query_as(
+        "SELECT canal::text,
+                count(*) FILTER (WHERE estado = 'pendiente' AND programado_para <= $1),
+                (extract(epoch FROM $1 - min(programado_para) FILTER (WHERE estado = 'pendiente' AND programado_para <= $1)) / 60)::bigint,
+                count(*) FILTER (WHERE enviado_en >= $1 - interval '24 hours'),
+                count(*) FILTER (WHERE estado = 'fallido' AND actualizado_en >= $1 - interval '24 hours'),
+                count(*) FILTER (WHERE estado = 'fallido' AND actualizado_en >= $1 - interval '1 hour')
+         FROM notificaciones.mensaje
+         WHERE (estado = 'pendiente' AND programado_para <= $1) OR actualizado_en >= $1 - interval '24 hours'
+         GROUP BY canal",
+    )
+    .bind(ahora)
+    .fetch_all(pool)
+    .await
+    .map_err(a_error_persistencia)?;
+    let webhooks: (i64, Option<i64>, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE procesado_en IS NULL),
+                (extract(epoch FROM $1 - min(recibido_en) FILTER (WHERE procesado_en IS NULL)) / 60)::bigint,
+                count(*) FILTER (WHERE error IS NOT NULL AND procesado_en >= $1 - interval '24 hours')
+         FROM notificaciones.evento_webhook
+         WHERE procesado_en IS NULL OR procesado_en >= $1 - interval '24 hours'",
+    )
+    .bind(ahora)
+    .fetch_one(pool)
+    .await
+    .map_err(a_error_persistencia)?;
+    Ok((
+        canales
+            .into_iter()
+            .map(|(canal, pendientes, atraso, enviados, fallidos, fallidos_hora)| {
+                (
+                    canal,
+                    crate::api::EstadoCanal {
+                        configurado: false,
+                        pendientes,
+                        atraso_min: atraso,
+                        enviados_24h: enviados,
+                        fallidos_24h: fallidos,
+                        fallidos_ultima_hora: fallidos_hora,
+                    },
+                )
+            })
+            .collect(),
+        webhooks,
+    ))
+}

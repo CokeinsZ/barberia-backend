@@ -43,6 +43,8 @@ pub(crate) struct Composicion {
     pub(crate) limites: Option<LimitesDeUso>,
     /// El sitio se sirve por HTTPS: las respuestas llevan `Strict-Transport-Security`.
     pub(crate) https: bool,
+    /// Métricas HTTP de este proceso (RNF-OBS-02).
+    pub(crate) metricas: Arc<plataforma::http::MetricasHttp>,
     pub(crate) identidad: ModuloIdentidad,
     pub(crate) negocio: ModuloNegocio,
     pub(crate) auditoria: ModuloAuditoria,
@@ -248,6 +250,7 @@ impl Composicion {
             confianza_proxy: ConfianzaProxy(configuracion.confiar_proxy),
             limites: configuracion.limites_de_uso.then(LimitesDeUso::default),
             https: configuracion.url_publica.starts_with("https://"),
+            metricas: plataforma::http::MetricasHttp::nuevas(),
             identidad,
             negocio,
             auditoria,

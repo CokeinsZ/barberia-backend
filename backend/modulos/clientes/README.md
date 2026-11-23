@@ -1,11 +1,11 @@
 # Módulo `clientes`
 
-Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de métricas
-(RF-CLI-01 a 04, RF-RES-11).
+Clientes, autorizaciones de tratamiento de datos, segmentos configurables y proyección de
+métricas (RF-CLI-01 a 04, RF-CFG-08, RF-RES-11).
 
 | | |
 |---|---|
-| Fase del plan | 3 ✅ (registro y búsqueda) · 5 ✅ (métricas por ventas, anonimización y solicitudes del titular) · 8 (segmentos configurables) |
+| Fase del plan | 3 ✅ (registro y búsqueda) · 5 ✅ (métricas por ventas, anonimización y solicitudes del titular) · 8 ✅ (segmentos configurables e indicadores de la base) |
 | Esquema de base de datos | `clientes` (ver `migraciones/`); lectura por la vista `v_cliente_resumen` |
 | Fachada | `api::ClientesAgenda<C>`: `por_celular`, `por_ids`, `registrar_en_linea`, `registrar_desde_panel`, `cambiar_recordatorios` (la usan `agenda` y, a través de `app`, `verificacion`) |
 
@@ -14,7 +14,8 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 | Método | Ruta | Acceso | Notas |
 |---|---|---|---|
 | GET | `/clientes/buscar?q=` | Personal | Búsqueda rápida por nombre o celular (2+ caracteres, máximo 8, sin tildes) |
-| GET | `/clientes?q=&segmento=&pagina=&por_pagina=` | Administrador | Listado con visitas, gasto, inasistencias y segmento |
+| GET | `/clientes?q=&segmento=&pagina=&por_pagina=` | Administrador | Listado con visitas, gasto, inasistencias y segmento; en `meta`, los indicadores de toda la base (registrados y cuántos hay en cada segmento), sin importar los filtros |
+| GET / PUT | `/clientes/configuracion-segmentos` | Administrador | Umbrales: `max_visitas_nuevo` (1–99), `max_visitas_recurrente` (mayor que el anterior, hasta 100) y `dias_inactividad` (15–365). Cada cambio queda en la auditoría (`cambiar_segmentos`, con el antes y el después) |
 | GET | `/clientes/{id}` | Administrador | Ficha con autorizaciones de datos |
 | POST | `/clientes` | Personal | `409 celular_en_uso` si el celular ya existe |
 | PUT | `/clientes/{id}` | Administrador | Datos, preferencias y recordatorios |
@@ -29,8 +30,12 @@ Clientes, autorizaciones de tratamiento de datos, segmentos y proyección de mé
 - **En línea** (al reservar): se crea o actualiza por celular (`ON CONFLICT`) y se guarda la
   autorización con la versión de la política, la IP y el agente (RF-RES-11, Ley 1581).
 - **Desde el panel**: el cliente que llamó se registra sin autorización en línea.
-- Segmentos: `sin_visitas`, `nuevo` (1 visita), `recurrente`, `frecuente` e `inactivo` (sin
-  volver en mucho tiempo); se calculan en el dominio a partir de la proyección de métricas.
+- Segmentos (RN-20, DA-07): `sin_visitas`; `inactivo` («sin volver») si la última visita fue hace
+  **más** de `dias_inactividad` días (prevalece); si no, `nuevo` hasta `max_visitas_nuevo`
+  visitas, `recurrente` hasta `max_visitas_recurrente` y `frecuente` de ahí en adelante. Por
+  defecto 2, 5 y 60. Se calculan al consultar con los umbrales vigentes (RF-SIS-06): un cambio se
+  ve de inmediato en el listado, la ficha, la búsqueda rápida y los reportes. Los conteos de
+  `meta` se hacen en SQL con la misma regla (una prueba compara ambos, incluido el borde exacto).
 - La ficha trae el ticket promedio (total gastado ÷ visitas, RN-21); las últimas visitas salen
   de `GET /ventas?cliente_id=`.
 - La búsqueda ignora tildes y mayúsculas en el nombre y compara los dígitos del celular aunque se

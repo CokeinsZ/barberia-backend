@@ -165,15 +165,29 @@ pub async fn limitar_uso(
     }
 }
 
+/// Plantilla de la ruta que atendió la petición, en la respuesta: la leen las capas de afuera
+/// (las métricas), donde el enrutador todavía no ha elegido la ruta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RutaAtendida(pub String);
+
 /// Anota en la traza de la petición (`ruta`) la plantilla de la ruta que atendió, p. ej.
 /// `/api/v1/publico/citas/gestion/{token}`: los logs nunca llevan los tokens del camino ni la
 /// consulta (`?q=` puede ser un nombre o un celular; `?firma=`, una firma). Se aplica con
-/// `route_layer`, donde el enrutador ya eligió la ruta.
+/// `route_layer`, donde el enrutador ya eligió la ruta. También deja la plantilla en la
+/// respuesta ([`RutaAtendida`]).
 pub async fn anotar_ruta(peticion: Request, siguiente: Next) -> Response {
-    if let Some(ruta) = peticion.extensions().get::<MatchedPath>() {
-        tracing::Span::current().record("ruta", tracing::field::display(ruta.as_str()));
+    let ruta = peticion
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|r| r.as_str().to_owned());
+    if let Some(ruta) = &ruta {
+        tracing::Span::current().record("ruta", tracing::field::display(ruta));
     }
-    siguiente.run(peticion).await
+    let mut respuesta = siguiente.run(peticion).await;
+    if let Some(ruta) = ruta {
+        respuesta.extensions_mut().insert(RutaAtendida(ruta));
+    }
+    respuesta
 }
 
 #[cfg(test)]

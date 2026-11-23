@@ -1,7 +1,8 @@
 //! Enrutador HTTP: monta `/api/v1` una sola vez con las rutas de cada módulo y agrega las
 //! capas transversales: id de solicitud, trazas (con la plantilla de la ruta, nunca la URL con
 //! sus tokens o datos personales), cabeceras de seguridad, IP del cliente, límites de uso por
-//! IP y por sesión, sesión, tiempo máximo y verificación de `Origin`.
+//! IP y por sesión, sesión, tiempo máximo, verificación de `Origin` y una red para los pánicos
+//! (responden `500` en *Problem Details* en lugar de cortar la conexión).
 //!
 //! Tiempo máximo: 30 s por petición, salvo los reportes (120 s), cuyos PDF pueden tardar
 //! (RNF-REN-04: hasta 30 s el de todos los barberos, en el servidor de producción).
@@ -11,12 +12,15 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{from_fn, from_fn_with_state};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Router};
 use plataforma::http::{
-    anotar_ruta, cabeceras_de_seguridad, hsts, limitar_uso, ruta_no_encontrada, verificar_origen,
+    ErrorHttp, anotar_ruta, cabeceras_de_seguridad, hsts, limitar_uso, medir, ruta_no_encontrada,
+    verificar_origen,
 };
 use tower_http::LatencyUnit;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, MakeSpan, TraceLayer};
@@ -32,6 +36,18 @@ const TIEMPO_MAXIMO_REPORTES: Duration = Duration::from_secs(120);
 
 fn tiempo_maximo(duracion: Duration) -> TimeoutLayer {
     TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, duracion)
+}
+
+/// Un pánico en una ruta (un error de programación) responde `500` en *Problem Details* y queda
+/// en el log, en lugar de cortar la conexión sin respuesta.
+fn panico_a_problema(panico: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    let mensaje = panico
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panico.downcast_ref::<&str>().copied())
+        .unwrap_or("sin mensaje");
+    tracing::error!(panico = mensaje, "pánico atendiendo una petición");
+    ErrorHttp::interno().into_response()
 }
 
 /// Traza de cada petición: método, ruta (la plantilla, que anota [`anotar_ruta`]) e id de
@@ -63,6 +79,7 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         .merge(composicion.agenda.rutas())
         .merge(composicion.notificaciones.rutas())
         .merge(composicion.ventas.rutas())
+        .merge(crate::sistema::rutas_panel(composicion))
         .layer(tiempo_maximo(TIEMPO_MAXIMO))
         .merge(
             composicion
@@ -91,6 +108,7 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
             "/api/salud/lista",
             get(salud::lista).with_state(composicion.pool.clone()),
         )
+        .merge(crate::sistema::ruta_salud(composicion))
         .layer(tiempo_maximo(TIEMPO_MAXIMO));
 
     // Fotos públicas (`/media/publico/*`): el proxy (Traefik) también las enruta a la API.
@@ -105,7 +123,8 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
         .merge(salud.route_layer(from_fn(anotar_ruta)))
         .nest("/api/v1", v1.route_layer(from_fn(anotar_ruta)))
         .merge(media.route_layer(from_fn(anotar_ruta)))
-        .fallback(ruta_no_encontrada);
+        .fallback(ruta_no_encontrada)
+        .layer(CatchPanicLayer::custom(panico_a_problema));
     let app = match &composicion.limites {
         Some(limites) => app.layer(from_fn_with_state(limites.clone(), limitar_uso)),
         None => app,
@@ -119,6 +138,8 @@ pub(crate) fn construir(composicion: &Composicion) -> Router {
     } else {
         app
     };
+    // Métricas de cada respuesta, también las de los límites de uso y las rutas que no existen.
+    let app = app.layer(from_fn_with_state(composicion.metricas.clone(), medir));
     app.layer(
         TraceLayer::new_for_http()
             .make_span_with(SpanPeticion)

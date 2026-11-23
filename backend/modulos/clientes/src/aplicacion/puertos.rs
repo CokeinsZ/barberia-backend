@@ -9,7 +9,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use nucleo::identificadores::IdCliente;
 use nucleo::{Celular, ErrorPersistencia, Reloj, SolicitudPagina, Transacciones};
 
-use super::dto::AutorizacionDto;
+use super::dto::{AutorizacionDto, IndicadoresClientesDto};
 use crate::api::{ClienteConocido, DatosReservaEnLinea};
 use crate::dominio::{DatosCliente, UmbralesSegmentos};
 
@@ -72,6 +72,15 @@ pub(crate) trait RepositorioClientes<C: Send>: Send + Sync + fmt::Debug {
         id: IdCliente,
     ) -> Result<Vec<AutorizacionDto>, ErrorPersistencia>;
     async fn umbrales(&self, cx: &mut C) -> Result<UmbralesSegmentos, ErrorPersistencia>;
+    async fn guardar_umbrales(&self, cx: &mut C, u: &UmbralesSegmentos) -> Result<(), ErrorPersistencia>;
+    /// Indicadores de toda la base vigente con los umbrales `u` a la fecha `hoy` (mismas reglas
+    /// que `dominio::segmento`).
+    async fn indicadores(
+        &self,
+        cx: &mut C,
+        hoy: NaiveDate,
+        u: UmbralesSegmentos,
+    ) -> Result<IndicadoresClientesDto, ErrorPersistencia>;
 }
 
 /// Solicitud del titular leída de la base.
