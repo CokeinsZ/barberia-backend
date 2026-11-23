@@ -64,6 +64,14 @@ fíjela con `DIAMANTE_APP=<nombre en Dokploy>`. Sin `DIAMANTE_SSH`, esos pasos s
 | 13 | Límites de uso: 429 con `Retry-After` y `X-Forwarded-For` falso (al final: agota el límite público un minuto) |
 | 99 | Limpieza: cancela las citas pendientes de la corrida, retira a sus barberos, desactiva sus servicios y cierra las sesiones |
 
+## Con WhatsApp de verdad, no
+
+La batería crea clientes con **celulares inventados**: con WhatsApp conectado a Meta, los
+mensajes (códigos, confirmaciones, recordatorios) les llegarían a personas reales. Después de
+iniciar sesión revisa `GET /api/v1/sistema/estado` y, si los WhatsApp salen por Meta, **se detiene
+antes de crear nada**. Para probar con Meta, hágalo a mano con su propio celular (runbook,
+sección 2.1).
+
 ## Límites de producción (por IP)
 
 - **Inicios de sesión: 10 cada 15 minutos.** Cada corrida usa 2 (4 con el barbero): no la corra

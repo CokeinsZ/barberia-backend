@@ -197,6 +197,7 @@ struct FilaPendiente {
     plantilla: String,
     variables: Value,
     intentos: i16,
+    creado_en: DateTime<Utc>,
 }
 
 /// Borra las variables de los mensajes secretos, salvo que se pidan conservar (simulador).
@@ -227,7 +228,7 @@ impl RepositorioMensajes for RepositorioMensajesPg {
              SET programado_para = $2, intentos = m.intentos + 1
              FROM lote
              WHERE m.id = lote.id
-             RETURNING m.id, m.destinatario, m.plantilla, m.variables, m.intentos",
+             RETURNING m.id, m.destinatario, m.plantilla, m.variables, m.intentos, m.creado_en",
         )
         .bind(ahora)
         .bind(reservar_hasta)
@@ -244,6 +245,7 @@ impl RepositorioMensajes for RepositorioMensajesPg {
                 plantilla: f.plantilla,
                 variables: f.variables,
                 intentos: f.intentos,
+                creado_en: f.creado_en,
             })
             .collect())
     }
@@ -277,6 +279,26 @@ impl RepositorioMensajes for RepositorioMensajesPg {
         .bind(id)
         .bind(recortar(error))
         .bind(cuando)
+        .execute(&self.pool)
+        .await
+        .map_err(a_error_persistencia)?;
+        Ok(())
+    }
+
+    async fn marcar_vencido(
+        &self,
+        id: i64,
+        motivo: &str,
+        conservar_variables: bool,
+    ) -> Result<(), ErrorPersistencia> {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE notificaciones.mensaje
+             SET estado = 'cancelado', ultimo_error = $2, {BORRAR_SECRETOS}
+             WHERE id = $1"
+        )))
+        .bind(id)
+        .bind(recortar(motivo))
+        .bind(conservar_variables)
         .execute(&self.pool)
         .await
         .map_err(a_error_persistencia)?;

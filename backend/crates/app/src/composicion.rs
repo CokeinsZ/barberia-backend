@@ -25,7 +25,7 @@ use ventas::{DependenciasVentas, ModuloVentas};
 use verificacion::{DependenciasVerificacion, ModuloVerificacion};
 
 use crate::ErrorDeArranque;
-use crate::adaptadores::{AgendaParaClientes, ClientesParaVerificacion};
+use crate::adaptadores::{AgendaParaClientes, ClientesParaVerificacion, NombreDesdeNegocio};
 use crate::tareas;
 
 /// Clave AES fija solo para desarrollo y pruebas, cuando no se define `DIAMANTE_CLAVE_CIFRADO`
@@ -108,11 +108,17 @@ impl Composicion {
         // Bus de eventos en la transacción: cada módulo suscribe aquí sus reacciones.
         let bus: Arc<BusEventos<UnidadDeTrabajo>> = Arc::new(BusEventos::nuevo());
         let auditoria = ModuloAuditoria::con_postgres(pool.clone(), reloj.clone());
+        // `negocio` va antes que `notificaciones`: las plantillas de WhatsApp llevan su nombre.
+        let negocio = ModuloNegocio::con_postgres(pool.clone(), reloj.clone(), auditoria.auditor());
         let notificaciones = ModuloNotificaciones::con_postgres(DependenciasNotificaciones {
             pool: pool.clone(),
             reloj: reloj.clone(),
             smtp: configuracion.smtp.as_ref(),
             whatsapp: &configuracion.whatsapp,
+            negocio: Arc::new(NombreDesdeNegocio {
+                parametros: negocio.parametros(),
+                transacciones: plataforma::base_datos::TransaccionesPg::nuevas(pool.clone()),
+            }),
             bus: bus.clone(),
         })?;
         let firmador = match &configuracion.clave_firma {
@@ -136,7 +142,6 @@ impl Composicion {
             raiz: configuracion.archivos_dir.clone(),
             firmador,
         });
-        let negocio = ModuloNegocio::con_postgres(pool.clone(), reloj.clone(), auditoria.auditor());
         let identidad = ModuloIdentidad::con_postgres(DependenciasIdentidad {
             pool: pool.clone(),
             reloj: reloj.clone(),

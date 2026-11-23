@@ -1,6 +1,6 @@
 // Salud, cabeceras de seguridad y sesión de la administradora (RF-AUT-01, ASVS V3 y V14).
 import { cookieDeSesion } from '../lib/cliente.mjs';
-import { assert, esperar, esperarError } from '../lib/registro.mjs';
+import { assert, esperar, esperarError, omitir } from '../lib/registro.mjs';
 
 export const nombre = '00 · Salud, cabeceras y sesión de la administradora';
 
@@ -71,6 +71,18 @@ export default async function (ctx, t) {
   });
   if (!sesion) throw new Error('Sin sesión de administradora no se puede seguir');
   ctx.admin = a.conSesion(sesion, 'administradora');
+
+  // La batería crea clientes con celulares inventados: con WhatsApp de verdad les llegarían
+  // mensajes a personas reales. Si Meta está conectado, la corrida se detiene aquí.
+  await t.paso('WhatsApp no sale por Meta (si sale, la batería no sigue)', async () => {
+    const r = await ctx.admin.get('/api/v1/sistema/estado');
+    if (r.estado === 404) omitir('la versión desplegada no tiene /sistema/estado');
+    const estado = esperar(r, 200);
+    if (estado.cola.proveedor_whatsapp === 'meta') {
+      ctx.detener = 'WhatsApp está conectado a Meta en este ambiente: la batería escribiría a celulares inventados (de personas reales). No se corre aquí.';
+      throw new Error(ctx.detener);
+    }
+  });
 
   await t.paso('Consultar la sesión actual', async () => {
     const s = esperar(await ctx.admin.get('/api/v1/auth/sesion'), 200);

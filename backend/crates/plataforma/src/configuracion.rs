@@ -108,14 +108,34 @@ pub struct Configuracion {
     pub limites_de_uso: bool,
 }
 
-/// WhatsApp. Sin credenciales de Meta, fuera de producción se usa el adaptador simulado; en
-/// producción los mensajes quedan en cola hasta configurar Meta (como el correo sin SMTP).
+/// WhatsApp. Con las credenciales de Meta (`cloud_api`), los mensajes salen por WhatsApp Cloud
+/// API; sin ellas, fuera de producción se usa el adaptador simulado y en producción los
+/// mensajes quedan en cola hasta configurar Meta (como el correo sin SMTP).
 #[derive(Debug, Clone)]
 pub struct ConfiguracionWhatsApp {
     pub simulado: bool,
+    pub cloud_api: Option<CloudApiWhatsApp>,
     /// Webhook de Meta (`/api/v1/webhooks/whatsapp`). Sin él, el webhook rechaza todo.
     pub webhook: Option<WebhookWhatsApp>,
 }
+
+/// Envío por WhatsApp Cloud API (Meta).
+#[derive(Debug, Clone)]
+pub struct CloudApiWhatsApp {
+    /// Token de acceso permanente de un usuario del sistema (`DIAMANTE_WHATSAPP_TOKEN`).
+    pub token: Secreto,
+    /// Identificador del número de teléfono en Meta (`DIAMANTE_WHATSAPP_ID_NUMERO`).
+    pub id_numero: String,
+    /// Idioma con que se registraron las plantillas (`DIAMANTE_WHATSAPP_IDIOMA`, `es_CO`).
+    pub idioma: String,
+    /// Base de la Graph API con su versión, sin barra final (`DIAMANTE_WHATSAPP_API`).
+    pub api: String,
+}
+
+/// Idioma de las plantillas por defecto: español (Colombia).
+pub const IDIOMA_WHATSAPP: &str = "es_CO";
+/// Graph API por defecto (v26.0, julio de 2026; cada versión dura unos dos años).
+pub const API_WHATSAPP: &str = "https://graph.facebook.com/v26.0";
 
 #[derive(Debug, Clone)]
 pub struct WebhookWhatsApp {
@@ -381,6 +401,48 @@ impl Configuracion {
             }
         };
 
+        let cloud_api = match (
+            leer("DIAMANTE_WHATSAPP_TOKEN"),
+            leer("DIAMANTE_WHATSAPP_ID_NUMERO"),
+        ) {
+            (Some(token), Some(id_numero)) => {
+                let id_numero = id_numero.trim().to_owned();
+                if id_numero.is_empty() || !id_numero.bytes().all(|b| b.is_ascii_digit()) {
+                    invalidas.push(
+                        "DIAMANTE_WHATSAPP_ID_NUMERO (el identificador numérico del número en Meta)"
+                            .to_owned(),
+                    );
+                }
+                let idioma = leer("DIAMANTE_WHATSAPP_IDIOMA").unwrap_or_else(|| IDIOMA_WHATSAPP.to_owned());
+                let valido = idioma.len() >= 2
+                    && idioma.len() <= 6
+                    && idioma.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_');
+                if !valido {
+                    invalidas.push(format!("DIAMANTE_WHATSAPP_IDIOMA={idioma} (p. ej., es_CO)"));
+                }
+                let api = leer("DIAMANTE_WHATSAPP_API")
+                    .unwrap_or_else(|| API_WHATSAPP.to_owned())
+                    .trim_end_matches('/')
+                    .to_owned();
+                if !api.starts_with("https://")
+                    && !(entorno != Entorno::Produccion && api.starts_with("http://"))
+                {
+                    invalidas.push("DIAMANTE_WHATSAPP_API (debe ser https://…)".to_owned());
+                }
+                Some(CloudApiWhatsApp {
+                    token: Secreto::nuevo(token.trim().to_owned()),
+                    id_numero,
+                    idioma,
+                    api,
+                })
+            }
+            (None, None) => None,
+            _ => {
+                invalidas.push("DIAMANTE_WHATSAPP_TOKEN y DIAMANTE_WHATSAPP_ID_NUMERO van juntas".to_owned());
+                None
+            }
+        };
+
         let webhook = match (
             leer("DIAMANTE_WHATSAPP_SECRETO_APP"),
             leer("DIAMANTE_WHATSAPP_TOKEN_VERIFICACION"),
@@ -449,7 +511,8 @@ impl Configuracion {
             clave_cifrado,
             rutas_de_pruebas,
             whatsapp: ConfiguracionWhatsApp {
-                simulado: entorno != Entorno::Produccion,
+                simulado: entorno != Entorno::Produccion && cloud_api.is_none(),
+                cloud_api,
                 webhook,
             },
             worker_en_api,
@@ -728,6 +791,86 @@ mod pruebas {
         ]))
         .unwrap();
         assert!(!c.whatsapp.simulado, "en producción nunca se simula");
+    }
+
+    #[test]
+    fn whatsapp_cloud_api_con_token_e_id_del_numero() {
+        let base = [
+            ("DATABASE_URL", "postgres://app@db/diamante"),
+            ("DIAMANTE_ENTORNO", "produccion"),
+            ("DIAMANTE_URL_PUBLICA", "https://diamante.co"),
+            FIRMA,
+            CIFRADO,
+        ];
+        let con = |extra: &[(&'static str, &'static str)]| {
+            let mut variables = base.to_vec();
+            variables.extend_from_slice(extra);
+            Configuracion::desde(fuente(&variables))
+        };
+        let c = con(&[
+            ("DIAMANTE_WHATSAPP_TOKEN", "EAAG-token-secreto"),
+            ("DIAMANTE_WHATSAPP_ID_NUMERO", "123456789012345"),
+        ])
+        .unwrap();
+        let cloud = c.whatsapp.cloud_api.as_ref().unwrap();
+        assert_eq!(
+            (
+                cloud.id_numero.as_str(),
+                cloud.idioma.as_str(),
+                cloud.api.as_str()
+            ),
+            ("123456789012345", "es_CO", "https://graph.facebook.com/v26.0")
+        );
+        assert!(!c.whatsapp.simulado);
+        assert!(
+            !format!("{c:?}").contains("EAAG-token-secreto"),
+            "el token nunca se imprime"
+        );
+
+        let c = con(&[
+            ("DIAMANTE_WHATSAPP_TOKEN", "t"),
+            ("DIAMANTE_WHATSAPP_ID_NUMERO", "1"),
+            ("DIAMANTE_WHATSAPP_IDIOMA", "es"),
+            ("DIAMANTE_WHATSAPP_API", "https://graph.facebook.com/v27.0/"),
+        ])
+        .unwrap();
+        let cloud = c.whatsapp.cloud_api.unwrap();
+        assert_eq!(
+            (cloud.idioma.as_str(), cloud.api.as_str()),
+            ("es", "https://graph.facebook.com/v27.0")
+        );
+
+        for (extra, invalidas) in [
+            (&[("DIAMANTE_WHATSAPP_TOKEN", "t")][..], 1),
+            (
+                &[
+                    ("DIAMANTE_WHATSAPP_TOKEN", "t"),
+                    ("DIAMANTE_WHATSAPP_ID_NUMERO", "no-es-numero"),
+                ][..],
+                1,
+            ),
+            (
+                &[
+                    ("DIAMANTE_WHATSAPP_TOKEN", "t"),
+                    ("DIAMANTE_WHATSAPP_ID_NUMERO", "1"),
+                    ("DIAMANTE_WHATSAPP_IDIOMA", "español"),
+                    ("DIAMANTE_WHATSAPP_API", "http://graph.facebook.com"),
+                ][..],
+                2,
+            ),
+        ] {
+            assert_eq!(con(extra).unwrap_err().invalidas.len(), invalidas, "{extra:?}");
+        }
+        // Fuera de producción, la API puede ser http (un Meta de mentira en las pruebas) y con
+        // credenciales no se simula.
+        let c = Configuracion::desde(fuente(&[
+            ("DATABASE_URL", "postgres://app@db/diamante"),
+            ("DIAMANTE_WHATSAPP_TOKEN", "t"),
+            ("DIAMANTE_WHATSAPP_ID_NUMERO", "1"),
+            ("DIAMANTE_WHATSAPP_API", "http://127.0.0.1:9999/v26.0"),
+        ]))
+        .unwrap();
+        assert!(!c.whatsapp.simulado && c.whatsapp.cloud_api.is_some());
     }
 
     #[test]

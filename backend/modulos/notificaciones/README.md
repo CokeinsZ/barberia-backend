@@ -1,14 +1,15 @@
 # Módulo `notificaciones`
 
-Cola de salida de mensajes (patrón *outbox*), correo SMTP, WhatsApp (simulado hasta tener
-credenciales de Meta), webhooks firmados y avisos internos para la administradora.
+Cola de salida de mensajes (patrón *outbox*), correo SMTP, WhatsApp (WhatsApp Cloud API de Meta
+o simulado fuera de producción), webhooks firmados y avisos internos para la administradora.
 
 | | |
 |---|---|
-| Fase del plan | 1 (correo) ✅ · 4 (WhatsApp, webhooks y avisos) ✅ |
+| Fase del plan | 1 (correo) ✅ · 4 (WhatsApp, webhooks y avisos) ✅ · 8 (envío real por Meta, vencimiento en la cola, vigilancia) ✅ |
 | Esquema de base de datos | `notificaciones` (ver `migraciones/`) |
 | Fachadas | `api::BuzonSalida<C>` (encolar correo y WhatsApp), `api::Avisos<C>` (avisos internos) y `api::ConsultaMensajes<C>` (estado de mensajes concretos), todas en la transacción de quien llama |
-| Plantillas de WhatsApp | `docs/diseno/plantillas-whatsapp.md`: el texto exacto para registrar en Meta (una prueba verifica que coincide con el código) |
+| Plantillas de WhatsApp | `docs/diseno/plantillas-whatsapp.md`: el texto registrado en Meta (`es_CO`), sus variables en orden y los botones (una prueba verifica que coincide con el código) |
+| Puerto que necesita | `api::NombreDelNegocio`: el nombre comercial para `{{2}}` de las plantillas de citas (lo implementa `app` con la fachada de `negocio`) |
 
 ## Cómo funciona la cola
 
@@ -22,11 +23,25 @@ credenciales de Meta), webhooks firmados y avisos internos para la administrador
    (RF-NOT-07, E2E-NOT-04).
 4. Las plantillas con enlaces o códigos (`contiene_secreto`) borran sus variables al enviarse o
    al fallar definitivamente.
+5. **Vencimiento**: un WhatsApp que esperó en la cola más de 24 horas (10 minutos un código de
+   verificación) ya no se envía: queda `cancelado` con el motivo. Así un atraso largo, o
+   conectar Meta sobre una cola vieja, no manda mensajes viejos.
 
 | Canal | Sin configuración | Con configuración |
 |---|---|---|
 | Correo | En cola, sin enviarse | SMTP (`DIAMANTE_SMTP_*`); Mailpit en desarrollo y E2E |
-| WhatsApp | Fuera de producción: **simulado**. En producción: en cola | WhatsApp Cloud API (pendiente: hoy no hay credenciales de Meta) |
+| WhatsApp | Fuera de producción: **simulado**. En producción: en cola | WhatsApp Cloud API con `DIAMANTE_WHATSAPP_TOKEN` y `DIAMANTE_WHATSAPP_ID_NUMERO` (idioma `DIAMANTE_WHATSAPP_IDIOMA`, `es_CO`; versión `DIAMANTE_WHATSAPP_API`, v26.0) |
+
+**WhatsApp Cloud API** (`infraestructura/whatsapp_meta.rs`): `POST {api}/{id_numero}/messages`
+con el token como `Bearer`, la plantilla por nombre e idioma, los parámetros del cuerpo en orden,
+el código también en el botón «Copiar código» y la carga (`confirmar`, `cancelar`) en los botones
+del recordatorio. El celular va con el indicativo (`57…`). El `wamid` que responde Meta queda en el
+mensaje y une los webhooks de estado y las respuestas. Los errores se clasifican: límites de
+envío, fallas de Meta y credenciales se reintentan; un número sin WhatsApp (131026) o una
+plantilla que no coincide (132xxx) quedan fallidos de inmediato, con aviso si era de una cita.
+Probado contra un Meta de mentira (un servidor HTTP local): `infraestructura/whatsapp_meta.rs` y
+`app/src/pruebas_whatsapp.rs` (confirmación, entrega, recordatorio con botones y «Confirmo»,
+código y número sin WhatsApp).
 
 ### WhatsApp simulado
 

@@ -19,6 +19,8 @@ pub(crate) struct MensajesEnMemoria {
     pub(crate) reintentos: Mutex<Vec<(i64, DateTime<Utc>)>>,
     /// `(id, error, aviso)`.
     pub(crate) fallidos: Mutex<Vec<(i64, String, Option<NuevoAviso>)>>,
+    /// `(id, motivo)`.
+    pub(crate) vencidos: Mutex<Vec<(i64, String)>>,
 }
 
 #[async_trait]
@@ -54,6 +56,11 @@ impl RepositorioMensajes for MensajesEnMemoria {
         Ok(())
     }
 
+    async fn marcar_vencido(&self, id: i64, motivo: &str, _: bool) -> Result<(), ErrorPersistencia> {
+        self.vencidos.lock().unwrap().push((id, motivo.to_owned()));
+        Ok(())
+    }
+
     async fn marcar_fallido(
         &self,
         id: i64,
@@ -67,7 +74,11 @@ impl RepositorioMensajes for MensajesEnMemoria {
     }
 }
 
-/// Mensaje pendiente a partir de una plantilla serializable (`{ plantilla, variables }`).
+/// Instante en que se encolan los mensajes de las pruebas (el reloj de las pruebas de envío).
+pub(crate) const ENCOLADO: &str = "2026-11-21T15:00:00Z";
+
+/// Mensaje pendiente a partir de una plantilla serializable (`{ plantilla, variables }`),
+/// encolado en [`ENCOLADO`].
 pub(crate) fn pendiente(
     id: i64,
     destinatario: &str,
@@ -81,5 +92,6 @@ pub(crate) fn pendiente(
         plantilla: valor["plantilla"].as_str().unwrap().to_owned(),
         variables: valor["variables"].take(),
         intentos,
+        creado_en: ENCOLADO.parse().unwrap(),
     }
 }

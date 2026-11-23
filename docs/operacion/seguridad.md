@@ -139,7 +139,10 @@ responde `404`.
 ## V13 · API y webhooks
 
 Webhook de WhatsApp con firma `X-Hub-Signature-256` sobre el cuerpo exacto y comparación en
-tiempo constante; el token de verificación de Meta también en tiempo constante. Sin CORS: el
+tiempo constante; el token de verificación de Meta también en tiempo constante. El envío por
+WhatsApp Cloud API usa HTTPS (rustls) con el token como `Bearer`; el token es un `Secreto` (no
+aparece en `Debug`, logs ni errores guardados) y los parámetros con enlaces o códigos se borran
+de la cola al enviarse. Un mensaje que esperó demasiado (24 h; un código, 10 min) ya no se envía. Sin CORS: el
 sitio y la API comparten origen detrás de Traefik.
 
 ## V14 · Configuración

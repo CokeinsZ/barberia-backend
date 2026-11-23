@@ -29,6 +29,12 @@ x-entorno-app: &entorno-app
   DIAMANTE_CONFIAR_PROXY: ${DIAMANTE_CONFIAR_PROXY:-false}
   DIAMANTE_PRUEBAS_E2E: ${DIAMANTE_PRUEBAS_E2E:-false}
   DIAMANTE_WORKER_EN_API: ${DIAMANTE_WORKER_EN_API:-false}
+  # WhatsApp Cloud API: token de acceso e id del número (van juntos; sin ellos, en producción los
+  # WhatsApp esperan en la cola), idioma de las plantillas y versión de la API.
+  DIAMANTE_WHATSAPP_TOKEN: ${DIAMANTE_WHATSAPP_TOKEN:-}
+  DIAMANTE_WHATSAPP_ID_NUMERO: ${DIAMANTE_WHATSAPP_ID_NUMERO:-}
+  DIAMANTE_WHATSAPP_IDIOMA: ${DIAMANTE_WHATSAPP_IDIOMA:-}
+  DIAMANTE_WHATSAPP_API: ${DIAMANTE_WHATSAPP_API:-}
   # Webhook de WhatsApp (secreto de la app de Meta y token de verificación).
   DIAMANTE_WHATSAPP_SECRETO_APP: ${DIAMANTE_WHATSAPP_SECRETO_APP:-}
   DIAMANTE_WHATSAPP_TOKEN_VERIFICACION: ${DIAMANTE_WHATSAPP_TOKEN_VERIFICACION:-}

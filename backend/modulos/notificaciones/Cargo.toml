@@ -1,6 +1,6 @@
 [package]
 name = "notificaciones"
-description = "Cola de salida de mensajes (patrón outbox), correo SMTP, WhatsApp (simulado hasta tener Meta), webhooks y avisos internos."
+description = "Cola de salida de mensajes (patrón outbox), correo SMTP, WhatsApp (Cloud API de Meta o simulado), webhooks y avisos internos."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,7 @@ contratos.workspace = true
 lettre.workspace = true
 nucleo.workspace = true
 plataforma.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

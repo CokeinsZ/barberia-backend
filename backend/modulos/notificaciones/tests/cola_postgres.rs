@@ -44,8 +44,20 @@ async fn base() -> BaseDePrueba {
 
 const SIMULADO: ConfiguracionWhatsApp = ConfiguracionWhatsApp {
     simulado: true,
+    cloud_api: None,
     webhook: None,
 };
+
+/// El nombre comercial de las plantillas de citas.
+#[derive(Debug)]
+struct NegocioDePrueba;
+
+#[async_trait::async_trait]
+impl notificaciones::api::NombreDelNegocio for NegocioDePrueba {
+    async fn nombre(&self) -> Option<String> {
+        Some("Diamante Barbería".into())
+    }
+}
 
 fn modulo(
     base: &BaseDePrueba,
@@ -58,6 +70,7 @@ fn modulo(
         reloj,
         smtp,
         whatsapp: &SIMULADO,
+        negocio: Arc::new(NegocioDePrueba),
         bus,
     })
     .unwrap()

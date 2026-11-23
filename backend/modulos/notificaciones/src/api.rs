@@ -189,7 +189,21 @@ pub struct ResumenEnvio {
     pub enviados: usize,
     pub reintentos: usize,
     pub fallidos: usize,
+    /// WhatsApp que esperaron demasiado en la cola y ya no se envían.
+    pub vencidos: usize,
 }
+
+/// Nombre comercial del negocio para las plantillas de WhatsApp (variable `{{2}}` de las de
+/// citas). Lo da el módulo `negocio` por un adaptador en `app`; se lee en cada pasada del
+/// worker, así un cambio de nombre se ve en los mensajes siguientes.
+#[async_trait]
+pub trait NombreDelNegocio: Send + Sync + std::fmt::Debug {
+    /// `None` si no se pudo leer: se usa [`NOMBRE_POR_DEFECTO`].
+    async fn nombre(&self) -> Option<String>;
+}
+
+/// Nombre que se usa si no se puede leer el configurado.
+pub const NOMBRE_POR_DEFECTO: &str = "Diamante Barbería";
 
 /// Un canal de la cola de salida (RNF-OBS-02).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -210,6 +224,8 @@ pub struct EstadoCanal {
 pub struct EstadoCola {
     pub correo: EstadoCanal,
     pub whatsapp: EstadoCanal,
+    /// `meta` (WhatsApp Cloud API), `simulado` (fuera de producción) o `null` (en cola).
+    pub proveedor_whatsapp: Option<&'static str>,
     pub webhooks_pendientes: i64,
     /// Minutos desde que llegó el webhook pendiente más antiguo.
     pub webhooks_atraso_min: Option<i64>,
@@ -229,6 +245,8 @@ pub struct ResumenWebhooks {
 pub enum ErrorNotificaciones {
     #[error("Configuración de SMTP inválida: {0}")]
     ConfiguracionSmtp(String),
+    #[error("Configuración de WhatsApp inválida: {0}")]
+    ConfiguracionWhatsApp(String),
     #[error("Error de persistencia: {0}")]
     Persistencia(#[from] ErrorPersistencia),
 }

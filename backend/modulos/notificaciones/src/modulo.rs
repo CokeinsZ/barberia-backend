@@ -8,12 +8,14 @@ use plataforma::configuracion::{ConfiguracionSmtp, ConfiguracionWhatsApp};
 use sqlx::PgPool;
 
 use crate::api::{
-    Avisos, BuzonSalida, ConsultaMensajes, ErrorNotificaciones, EstadoCanal, EstadoCola, ResumenEnvio,
-    ResumenWebhooks,
+    Avisos, BuzonSalida, ConsultaMensajes, ErrorNotificaciones, EstadoCanal, EstadoCola, NombreDelNegocio,
+    ResumenEnvio, ResumenWebhooks,
 };
+use crate::aplicacion::puertos::PasarelaWhatsApp;
 use crate::aplicacion::{EnviarCorreosPendientes, EnviarWhatsAppPendientes, ProcesarWebhooks};
 use crate::infraestructura::postgres::{BuzonPg, RepositorioMensajesPg, RepositorioWebhooksPg, limpiar};
 use crate::infraestructura::smtp::TransporteSmtp;
+use crate::infraestructura::whatsapp_meta::WhatsAppCloudApi;
 use crate::infraestructura::whatsapp_simulado::WhatsAppSimulado;
 
 /// Lo que el módulo necesita de afuera (lo arma `app`).
@@ -24,6 +26,8 @@ pub struct DependenciasNotificaciones<'a> {
     /// Sin SMTP, los correos se encolan pero no se envían.
     pub smtp: Option<&'a ConfiguracionSmtp>,
     pub whatsapp: &'a ConfiguracionWhatsApp,
+    /// Nombre comercial para las plantillas de WhatsApp (lo da `negocio`).
+    pub negocio: Arc<dyn NombreDelNegocio>,
     /// Para publicar las respuestas de los clientes (`RespuestaWhatsAppRecibida`).
     pub bus: Arc<BusEventos<UnidadDeTrabajo>>,
 }
@@ -35,6 +39,7 @@ pub struct ModuloNotificaciones {
     buzon: Arc<BuzonPg>,
     enviar_correos: Option<Arc<EnviarCorreosPendientes>>,
     enviar_whatsapp: Option<Arc<EnviarWhatsAppPendientes>>,
+    proveedor_whatsapp: Option<&'static str>,
     webhooks: Arc<ProcesarWebhooks<UnidadDeTrabajo>>,
     webhook: Option<Arc<plataforma::configuracion::WebhookWhatsApp>>,
 }
@@ -50,12 +55,30 @@ impl ModuloNotificaciones {
             ))),
             None => None,
         };
-        // Sin credenciales de Meta (aún no hay adaptador real): fuera de producción se simula;
-        // en producción los WhatsApp quedan en cola, como los correos sin SMTP.
-        let enviar_whatsapp = d.whatsapp.simulado.then(|| {
+        // Con credenciales de Meta, WhatsApp Cloud API; sin ellas, fuera de producción se simula
+        // y en producción los WhatsApp quedan en cola, como los correos sin SMTP.
+        let proveedor_whatsapp = match (&d.whatsapp.cloud_api, d.whatsapp.simulado) {
+            (Some(_), _) => Some("meta"),
+            (None, true) => Some("simulado"),
+            (None, false) => None,
+        };
+        let pasarela: Option<Arc<dyn PasarelaWhatsApp>> = match &d.whatsapp.cloud_api {
+            Some(cloud) => Some(Arc::new(
+                WhatsAppCloudApi::nuevo(cloud).map_err(ErrorNotificaciones::ConfiguracionWhatsApp)?,
+            )),
+            None if d.whatsapp.simulado => Some(Arc::new(WhatsAppSimulado)),
+            None => None,
+        };
+        if d.whatsapp.cloud_api.is_some() && d.whatsapp.webhook.is_none() {
+            tracing::warn!(
+                "WhatsApp sale por Meta sin webhook: no llegarán los estados de entrega ni las respuestas a los botones"
+            );
+        }
+        let enviar_whatsapp = pasarela.map(|pasarela| {
             Arc::new(EnviarWhatsAppPendientes::nuevo(
                 mensajes,
-                Arc::new(WhatsAppSimulado),
+                pasarela,
+                d.negocio.clone(),
                 d.reloj.clone(),
             ))
         });
@@ -73,6 +96,7 @@ impl ModuloNotificaciones {
             buzon,
             enviar_correos,
             enviar_whatsapp,
+            proveedor_whatsapp,
             webhooks,
             webhook: d.whatsapp.webhook.clone().map(Arc::new),
         })
@@ -110,7 +134,7 @@ impl ModuloNotificaciones {
         self.enviar_correos.is_some()
     }
 
-    /// `true` si los WhatsApp salen de la cola (hoy, con el simulador).
+    /// `true` si los WhatsApp salen de la cola: por Meta o, fuera de producción, simulados.
     pub fn envia_whatsapp(&self) -> bool {
         self.enviar_whatsapp.is_some()
     }
@@ -146,6 +170,7 @@ impl ModuloNotificaciones {
         Ok(EstadoCola {
             correo: canal("correo", self.envia_correos()),
             whatsapp: canal("whatsapp", self.envia_whatsapp()),
+            proveedor_whatsapp: self.proveedor_whatsapp,
             webhooks_pendientes,
             webhooks_atraso_min,
             webhooks_con_error_24h,

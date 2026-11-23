@@ -62,6 +62,36 @@ de la prueba de restauración).
 7. **Probar la preproducción** con la batería E2E contra el servidor desplegado
    ([pruebas/preproduccion](../../pruebas/preproduccion/README.md)). Deja datos marcados
    `E2E …` y mensajes de WhatsApp en cola: antes de abrir al público, reinicie la base.
+8. **Conectar WhatsApp** cuando Meta apruebe las plantillas (sección 2.1).
+
+### 2.1 Conectar WhatsApp (Meta)
+
+Las plantillas, su texto y sus variables están en
+[plantillas-whatsapp.md](../diseno/plantillas-whatsapp.md) (español de Colombia, `es_CO`).
+
+1. **Vacíe la cola de WhatsApp** si en ese ambiente hubo pruebas: la batería de preproducción
+   crea clientes con celulares inventados, que pueden ser de personas reales. Lo que esperó más
+   de 24 horas (10 minutos un código) ya no se envía, pero lo reciente sí:
+   ```bash
+   docker exec -i APP-db-1 psql -U diamante_propietario -d diamante -c \
+     "UPDATE notificaciones.mensaje SET estado = 'cancelado', variables = '{}',
+        ultimo_error = 'Cancelado antes de conectar Meta'
+      WHERE canal = 'whatsapp' AND estado = 'pendiente';"
+   ```
+   En producción, lo mejor es empezar con la base limpia (sin datos de prueba).
+2. En Dokploy, agregue `DIAMANTE_WHATSAPP_TOKEN`, `DIAMANTE_WHATSAPP_ID_NUMERO`,
+   `DIAMANTE_WHATSAPP_SECRETO_APP` y `DIAMANTE_WHATSAPP_TOKEN_VERIFICACION` (sección 3) y
+   despliegue.
+3. En Meta (configuración de WhatsApp de la app → Webhooks): URL de devolución
+   `https://<dominio>/api/v1/webhooks/whatsapp`, el mismo token de verificación, y suscriba el
+   campo **`messages`**. Meta verifica la URL en ese momento: la API debe estar arriba.
+4. Pruebe con su propio celular: una reserva en línea (llega el código y la confirmación), un
+   recordatorio manual desde la agenda y el botón «Confirmo». En `GET /api/v1/mensajes` cada
+   mensaje pasa a `enviado` y luego a `entregado` y `leido`; si algo falla, el motivo (`Meta
+   132001: …`) queda en el mensaje y la administradora recibe un aviso.
+
+**No corra la batería de preproducción en un ambiente con WhatsApp real**: se niega a correr si lo
+detecta, porque escribiría a celulares inventados.
 
 ## 3. Variables de producción
 
@@ -80,13 +110,20 @@ base. **Cada variable con su propio valor** (no reutilice la misma clave).
 | `DIAMANTE_CLAVE_FIRMA` | Firma de las URL de descarga | `openssl rand -base64 48` |
 | `DIAMANTE_CLAVE_CIFRADO` | Cifrado de los datos privados de los barberos | `openssl rand -base64 32` |
 | `DIAMANTE_SMTP_HOST`, `_PUERTO`, `_SEGURIDAD`, `_USUARIO`, `_CLAVE`, `_REMITENTE` | Correo saliente (invitaciones, recuperación). Puerto 465 con `tls` o 587 con `starttls` (la combinación cruzada no arranca). Gmail: clave de aplicación sin espacios | Del proveedor de correo |
+| `DIAMANTE_WHATSAPP_TOKEN` | Token de acceso **permanente** de un usuario del sistema con permiso `whatsapp_business_messaging` (Meta Business → Usuarios del sistema → Generar token) | Meta |
+| `DIAMANTE_WHATSAPP_ID_NUMERO` | *Phone Number ID* del número de la barbería (WhatsApp Manager → Configuración de la API), solo dígitos | Meta |
+| `DIAMANTE_WHATSAPP_SECRETO_APP` | *App Secret* de la app de Meta (Configuración de la app → Básica): firma de los webhooks | Meta |
+| `DIAMANTE_WHATSAPP_TOKEN_VERIFICACION` | Cadena que usted inventa y pone igual en el campo *Verify token* del webhook en Meta | `openssl rand -hex 24` |
 | `DIAMANTE_RESPALDO_REMOTO` | `cifrado:` | Sección 5 |
 | `DIAMANTE_RESPALDO_RCLONE_CONF_B64` | Configuración de rclone en base64 | Sección 5 |
 
 Opcionales (tienen buen valor por defecto): `DIAMANTE_RESPALDO_CADA_MINUTOS` (60),
 `DIAMANTE_RESPALDO_HORA_DIARIA` (2), `DIAMANTE_RESPALDO_RETENCION_DIAS` (30),
-`DIAMANTE_ORIGENES` (otros orígenes permitidos), `DIAMANTE_WHATSAPP_SECRETO_APP` y
-`DIAMANTE_WHATSAPP_TOKEN_VERIFICACION` (cuando estén las plantillas de Meta). **Nunca en
+`DIAMANTE_ORIGENES` (otros orígenes permitidos), `DIAMANTE_WHATSAPP_IDIOMA` (`es_CO`, el idioma
+con que se crearon las plantillas) y `DIAMANTE_WHATSAPP_API` (`https://graph.facebook.com/v26.0`;
+Meta retira cada versión unos dos años después de publicarla: súbala cuando avise). Las dos de
+WhatsApp que van juntas son el token con el id del número (envío) y el secreto con el token de
+verificación (webhook); sin el envío, los WhatsApp esperan en la cola. **Nunca en
 producción**: `DIAMANTE_PRUEBAS_E2E`, `DIAMANTE_WORKER_EN_API` ni `DIAMANTE_LIMITES_DE_USO=false`
 (la API se niega a arrancar con los dos que lo comprueban).
 

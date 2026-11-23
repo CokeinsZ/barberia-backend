@@ -1,6 +1,9 @@
-//! Plantillas de WhatsApp: el texto que se registra en Meta (ver
-//! `docs/diseno/plantillas-whatsapp.md`) y su renderizado. El adaptador simulado muestra
-//! exactamente este texto, así lo que se prueba es lo que recibirá el cliente.
+//! Plantillas de WhatsApp: el texto registrado en Meta (español de Colombia, `es_CO`; ver
+//! `docs/diseno/plantillas-whatsapp.md`) y sus parámetros. A Meta solo van los parámetros, en
+//! orden: Meta arma el mensaje con su texto. El simulador muestra este mismo texto, así lo que
+//! se prueba es lo que recibirá el cliente.
+
+use chrono::TimeDelta;
 
 use crate::api::PlantillaWhatsApp;
 
@@ -47,29 +50,28 @@ pub(crate) const DEFINICIONES: [DefinicionPlantilla; 6] = [
     DefinicionPlantilla {
         nombre: "cita_confirmada",
         categoria: "UTILITY",
-        cuerpo: "Hola {{1}}, tu cita en Diamante Barbería quedó agendada para el {{2}} a las {{3}}: {{4}} con {{5}}. \
-                 Puedes verla, reprogramarla o cancelarla aquí: {{6}} ¡Te esperamos!",
+        cuerpo: "Hola {{1}}.\nTu cita en {{2}} para el servicio {{3}} quedó agendada con {{4}} el {{5}} a las {{6}}.\n\n\
+                 Puedes verla, reprogramarla o cancelarla aquí: {{7}}\n\n¡Te esperamos!",
         botones: &[],
     },
     DefinicionPlantilla {
         nombre: "recordatorio_cita",
         categoria: "UTILITY",
-        cuerpo: "Hola {{1}}, te recordamos tu cita en Diamante Barbería el {{2}} a las {{3}}: {{4}} con {{5}}. \
-                 ¿Nos confirmas tu asistencia?",
+        cuerpo: "Hola {{1}}.\nTe recordamos tu cita en {{2}} el {{3}} a las {{4}} con {{5}}.\n¿Nos confirmas tu asistencia?",
         botones: BOTONES_RECORDATORIO,
     },
     DefinicionPlantilla {
         nombre: "cita_reprogramada",
         categoria: "UTILITY",
-        cuerpo: "Hola {{1}}, tu cita en Diamante Barbería cambió: ahora es el {{2}} a las {{3}}, {{4}} con {{5}}. \
-                 Puedes gestionarla aquí: {{6}} Si no puedes asistir, avísanos.",
+        cuerpo: "Hola {{1}}.\nTu cita en {{2}} cambió.\nAhora es el {{3}} a las {{4}}, con {{5}}.\n\n\
+                 Puedes gestionarla aquí: {{6}}\n\n¡Te esperamos!",
         botones: &[],
     },
     DefinicionPlantilla {
         nombre: "cita_cancelada",
         categoria: "UTILITY",
-        cuerpo: "Hola {{1}}, tu cita de {{2}} del {{3}} a las {{4}} en Diamante Barbería fue cancelada. \
-                 Si quieres, agenda otra en nuestra página. ¡Gracias!",
+        cuerpo: "Hola {{1}}.\nTu cita en {{2}} de {{3}} de la fecha {{4}} fue cancelada.\n\
+                 Si quieres, puedes agendar otra en nuestra página.\n¡Gracias!",
         botones: &[],
     },
     DefinicionPlantilla {
@@ -94,9 +96,13 @@ pub(crate) fn definicion(nombre: &str) -> Option<&'static DefinicionPlantilla> {
     DEFINICIONES.iter().find(|d| d.nombre == nombre)
 }
 
-pub(crate) fn renderizar(plantilla: &PlantillaWhatsApp) -> WhatsAppRenderizado {
-    let (nombre, parametros): (&str, Vec<&String>) = match plantilla {
-        PlantillaWhatsApp::CodigoVerificacion { codigo } => ("codigo_verificacion", vec![codigo]),
+/// Parámetros de cada plantilla, en el orden de sus variables. `negocio` es el nombre
+/// comercial (variable `{{2}}` de las plantillas de citas): se toma al enviar, así un cambio de
+/// nombre en la configuración se ve en los mensajes siguientes.
+pub(crate) fn renderizar(plantilla: &PlantillaWhatsApp, negocio: &str) -> WhatsAppRenderizado {
+    let negocio = negocio.to_owned();
+    let (nombre, parametros): (&str, Vec<String>) = match plantilla {
+        PlantillaWhatsApp::CodigoVerificacion { codigo } => ("codigo_verificacion", vec![codigo.clone()]),
         PlantillaWhatsApp::CitaConfirmada {
             nombre,
             servicio,
@@ -106,32 +112,65 @@ pub(crate) fn renderizar(plantilla: &PlantillaWhatsApp) -> WhatsAppRenderizado {
             enlace,
         } => (
             "cita_confirmada",
-            vec![nombre, fecha, hora, servicio, barbero, enlace],
+            vec![
+                nombre.clone(),
+                negocio,
+                servicio.clone(),
+                barbero.clone(),
+                fecha.clone(),
+                hora.clone(),
+                enlace.clone(),
+            ],
         ),
         PlantillaWhatsApp::RecordatorioCita {
             nombre,
-            servicio,
             barbero,
             fecha,
             hora,
-        } => ("recordatorio_cita", vec![nombre, fecha, hora, servicio, barbero]),
+            ..
+        } => (
+            "recordatorio_cita",
+            vec![
+                nombre.clone(),
+                negocio,
+                fecha.clone(),
+                hora.clone(),
+                barbero.clone(),
+            ],
+        ),
         PlantillaWhatsApp::CitaReprogramada {
             nombre,
-            servicio,
             barbero,
             fecha,
             hora,
             enlace,
+            ..
         } => (
             "cita_reprogramada",
-            vec![nombre, fecha, hora, servicio, barbero, enlace],
+            vec![
+                nombre.clone(),
+                negocio,
+                fecha.clone(),
+                hora.clone(),
+                barbero.clone(),
+                enlace.clone(),
+            ],
         ),
         PlantillaWhatsApp::CitaCancelada {
             nombre,
             servicio,
             fecha,
             hora,
-        } => ("cita_cancelada", vec![nombre, servicio, fecha, hora]),
+        } => (
+            "cita_cancelada",
+            // «…de la fecha {{4}} fue cancelada»: la fecha con su hora.
+            vec![
+                nombre.clone(),
+                negocio,
+                servicio.clone(),
+                format!("{fecha} a las {hora}"),
+            ],
+        ),
         PlantillaWhatsApp::AvisoReprogramacion {
             nombre,
             servicio,
@@ -140,12 +179,22 @@ pub(crate) fn renderizar(plantilla: &PlantillaWhatsApp) -> WhatsAppRenderizado {
             enlace,
         } => (
             "aviso_reprogramacion",
-            vec![nombre, fecha, hora, servicio, enlace],
+            vec![
+                nombre.clone(),
+                fecha.clone(),
+                hora.clone(),
+                servicio.clone(),
+                enlace.clone(),
+            ],
         ),
     };
     // Las definiciones cubren todas las variantes (lo verifica una prueba).
     let definicion = definicion(nombre).unwrap_or(&DEFINICIONES[0]);
-    let parametros: Vec<String> = parametros.into_iter().cloned().collect();
+    let parametros: Vec<String> = parametros
+        .into_iter()
+        .enumerate()
+        .map(|(i, valor)| parametro(definicion.cuerpo, i + 1, &valor))
+        .collect();
     let mut texto = definicion.cuerpo.to_owned();
     for (posicion, valor) in parametros.iter().enumerate() {
         texto = texto.replace(&format!("{{{{{}}}}}", posicion + 1), valor);
@@ -155,6 +204,29 @@ pub(crate) fn renderizar(plantilla: &PlantillaWhatsApp) -> WhatsAppRenderizado {
         parametros,
         botones: definicion.botones,
         texto,
+    }
+}
+
+/// Cuánto puede esperar un WhatsApp en la cola antes de dejar de tener sentido: el código de
+/// verificación vence a los 10 minutos (lo dice su plantilla); una confirmación, un
+/// recordatorio o un aviso, a las 24 horas. Así un atraso largo, o configurar Meta sobre una cola
+/// vieja (por ejemplo, la de preproducción, con celulares de prueba), no manda mensajes viejos.
+pub(crate) fn vigencia(plantilla: &PlantillaWhatsApp) -> TimeDelta {
+    match plantilla {
+        PlantillaWhatsApp::CodigoVerificacion { .. } => TimeDelta::minutes(10),
+        _ => TimeDelta::hours(24),
+    }
+}
+
+/// Un parámetro tal como lo acepta Meta: sin saltos de línea ni tabulaciones ni más de un
+/// espacio seguido (error 132018). Si en la plantilla la variable va seguida de un punto, el
+/// valor no termina en punto: «a las {{6}}.» con «9:00 a. m.» daría «a. m..».
+fn parametro(cuerpo: &str, posicion: usize, valor: &str) -> String {
+    let limpio = valor.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cuerpo.contains(&format!("{{{{{posicion}}}}}.")) {
+        limpio.strip_suffix('.').unwrap_or(&limpio).to_owned()
+    } else {
+        limpio
     }
 }
 
@@ -298,7 +370,7 @@ mod pruebas {
                 .as_str()
                 .unwrap()
                 .to_owned();
-            let renderizado = renderizar(&plantilla);
+            let renderizado = renderizar(&plantilla, "Diamante Barbería");
             assert_eq!(renderizado.plantilla, en_cola);
             assert!(
                 !renderizado.texto.contains("{{"),
@@ -340,22 +412,73 @@ mod pruebas {
     fn la_hora_nunca_queda_seguida_de_un_punto() {
         // Con «9:00 a. m.» un punto después de la variable daría «a. m..».
         for plantilla in todas() {
-            let texto = renderizar(&plantilla).texto;
+            let texto = renderizar(&plantilla, "Diamante Barbería").texto;
             assert!(!texto.contains(".."), "{texto}");
         }
     }
 
     #[test]
     fn renderiza_el_texto_y_los_botones_del_recordatorio() {
-        let r = renderizar(&todas()[2]);
+        let r = renderizar(&todas()[2], "Diamante Barbería");
         assert_eq!(
             r.texto,
-            "Hola Andrea, te recordamos tu cita en Diamante Barbería el lunes 23 de noviembre a las 9:00 a. m.: \
-             Corte clásico con Daniel. ¿Nos confirmas tu asistencia?"
+            "Hola Andrea.\nTe recordamos tu cita en Diamante Barbería el lunes 23 de noviembre a las 9:00 a. m. \
+             con Daniel.\n¿Nos confirmas tu asistencia?"
+        );
+        assert_eq!(
+            r.parametros,
+            [
+                "Andrea",
+                "Diamante Barbería",
+                "lunes 23 de noviembre",
+                "9:00 a. m.",
+                "Daniel"
+            ]
         );
         assert_eq!(
             r.botones.iter().map(|b| b.carga).collect::<Vec<_>>(),
             [CONFIRMAR, CANCELAR]
+        );
+    }
+
+    #[test]
+    fn la_confirmacion_lleva_el_negocio_y_la_hora_sin_doble_punto() {
+        let r = renderizar(&todas()[1], "Barbería del Centro");
+        assert_eq!(
+            r.parametros,
+            [
+                "Andrea",
+                "Barbería del Centro",
+                "Corte clásico",
+                "Daniel",
+                "lunes 23 de noviembre",
+                "9:00 a. m",
+                "https://diamante.co/cita/abc"
+            ],
+            "{{6}} va seguida de un punto en la plantilla: la hora pierde el suyo"
+        );
+        assert_eq!(
+            r.texto,
+            "Hola Andrea.\nTu cita en Barbería del Centro para el servicio Corte clásico quedó agendada con Daniel \
+             el lunes 23 de noviembre a las 9:00 a. m.\n\nPuedes verla, reprogramarla o cancelarla aquí: \
+             https://diamante.co/cita/abc\n\n¡Te esperamos!"
+        );
+        let cancelada = renderizar(&todas()[4], "Diamante Barbería");
+        assert_eq!(cancelada.parametros[3], "lunes 23 de noviembre a las 9:00 a. m.");
+    }
+
+    #[test]
+    fn los_parametros_no_llevan_saltos_ni_espacios_de_mas() {
+        let p = PlantillaWhatsApp::CitaCancelada {
+            nombre: "Ana\n  María\tRuiz".into(),
+            servicio: "Corte     clásico".into(),
+            fecha: "lunes".into(),
+            hora: "9:00 a. m.".into(),
+        };
+        let r = renderizar(&p, "  Diamante \n Barbería ");
+        assert_eq!(
+            r.parametros[..3],
+            ["Ana María Ruiz", "Diamante Barbería", "Corte clásico"]
         );
     }
 

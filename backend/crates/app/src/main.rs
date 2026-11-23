@@ -34,6 +34,8 @@ mod pruebas_postgres;
 mod pruebas_reportes;
 #[cfg(test)]
 mod pruebas_robustez;
+#[cfg(test)]
+mod pruebas_whatsapp;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;

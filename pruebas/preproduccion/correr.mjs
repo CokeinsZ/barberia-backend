@@ -72,6 +72,10 @@ for (const archivo of archivos) {
     registro.resultados.push({ escenario: registro.escenario, paso: '(escenario)', resultado: 'falló', motivo: error.message });
     console.log(`  ✘ el escenario se detuvo: ${error.message}`);
   }
+  if (ctx.detener) {
+    console.error(`\n✘ Corrida detenida antes de crear datos: ${ctx.detener}`);
+    process.exit(2);
+  }
 }
 
 const r = registro.resumen();

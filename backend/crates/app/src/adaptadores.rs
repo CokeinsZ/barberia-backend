@@ -62,3 +62,22 @@ impl clientes::api::AgendaDelCliente<UnidadDeTrabajo> for AgendaParaClientes {
         }
     }
 }
+
+/// Nombre comercial para las plantillas de WhatsApp (`notificaciones`), leído con la fachada de
+/// `negocio` en una transacción propia: el worker lo pide una vez por pasada.
+#[derive(Debug)]
+pub(crate) struct NombreDesdeNegocio {
+    pub(crate) parametros: Arc<dyn negocio::api::ParametrosNegocio<UnidadDeTrabajo>>,
+    pub(crate) transacciones: plataforma::base_datos::TransaccionesPg,
+}
+
+#[async_trait]
+impl notificaciones::api::NombreDelNegocio for NombreDesdeNegocio {
+    async fn nombre(&self) -> Option<String> {
+        use nucleo::Transacciones;
+        let mut cx = self.transacciones.iniciar().await.ok()?;
+        let identificacion = self.parametros.identificacion(&mut cx).await.ok()?;
+        self.transacciones.confirmar(cx).await.ok()?;
+        Some(identificacion.nombre_comercial)
+    }
+}

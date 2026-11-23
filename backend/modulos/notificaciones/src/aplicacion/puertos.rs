@@ -32,6 +32,8 @@ pub(crate) struct MensajePendiente {
     pub(crate) plantilla: String,
     pub(crate) variables: Value,
     pub(crate) intentos: i16,
+    /// Cuándo se encoló (para no enviar lo que ya venció).
+    pub(crate) creado_en: DateTime<Utc>,
 }
 
 /// La cola de salida vista por el worker. Cada operación es atómica por sí sola: el envío
@@ -59,6 +61,15 @@ pub(crate) trait RepositorioMensajes: Send + Sync + std::fmt::Debug {
     ) -> Result<(), ErrorPersistencia>;
 
     async fn reintentar(&self, id: i64, error: &str, cuando: DateTime<Utc>) -> Result<(), ErrorPersistencia>;
+
+    /// Un mensaje que ya no tiene sentido enviar (venció en la cola) queda «cancelado» con el
+    /// motivo y sin sus secretos.
+    async fn marcar_vencido(
+        &self,
+        id: i64,
+        motivo: &str,
+        conservar_variables: bool,
+    ) -> Result<(), ErrorPersistencia>;
 
     /// Fallo definitivo. Con `aviso`, se registra para la administradora en la misma operación.
     async fn marcar_fallido(

@@ -100,8 +100,10 @@ impl Escenario {
                 smtp: None,
                 whatsapp: &plataforma::configuracion::ConfiguracionWhatsApp {
                     simulado: false,
+                    cloud_api: None,
                     webhook: None,
                 },
+                negocio: Arc::new(SinNegocio),
                 bus: Arc::new(nucleo::eventos::BusEventos::nuevo()),
             })
             .unwrap()
@@ -491,4 +493,15 @@ async fn gestion_de_administradores() {
     assert!(acciones.contains(&"desactivar_administrador".to_owned()));
     assert!(acciones.contains(&"cambiar_contrasena".to_owned()));
     e.base.eliminar().await;
+}
+
+/// Estas pruebas no envían WhatsApp: el nombre del negocio no hace falta.
+#[derive(Debug)]
+struct SinNegocio;
+
+#[async_trait::async_trait]
+impl notificaciones::api::NombreDelNegocio for SinNegocio {
+    async fn nombre(&self) -> Option<String> {
+        None
+    }
 }

@@ -174,7 +174,8 @@ mod pruebas {
             ResumenEnvio {
                 enviados: 1,
                 reintentos: 1,
-                fallidos: 3
+                fallidos: 3,
+                vencidos: 0,
             }
         );
         assert_eq!(
