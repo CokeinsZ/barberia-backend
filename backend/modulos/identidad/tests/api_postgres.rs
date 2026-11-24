@@ -102,6 +102,7 @@ impl Escenario {
                     simulado: false,
                     cloud_api: None,
                     webhook: None,
+                    solo_a: Vec::new(),
                 },
                 negocio: Arc::new(SinNegocio),
                 bus: Arc::new(nucleo::eventos::BusEventos::nuevo()),

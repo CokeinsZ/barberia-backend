@@ -5,7 +5,7 @@
 PRUEBAS_DATABASE_URL ?= postgres://diamante_propietario@127.0.0.1:5432/postgres
 
 .PHONY: ayuda dev abajo logs migrar administrador imagen backend-formato backend-lint backend-pruebas verificar-esquema \
-	rol-respaldo respaldo probar-restauracion coleccion rendimiento preproduccion
+	rol-respaldo respaldo probar-restauracion coleccion rendimiento preproduccion whatsapp-real
 
 ayuda: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
@@ -63,4 +63,8 @@ rendimiento: ## Pruebas de carga con dos años de datos (ver pruebas/rendimiento
 preproduccion: ## Batería E2E contra el servidor desplegado: make preproduccion URL=https://… SSH=usuario@vps
 	@test -n "$(URL)" || { echo "Falta URL=https://… (ver pruebas/preproduccion/README.md)"; exit 2; }
 	cd pruebas/preproduccion && DIAMANTE_URL="$(URL)" DIAMANTE_SSH="$(SSH)" node correr.mjs
+
+whatsapp-real: ## WhatsApp de verdad (Meta) a SU celular: make whatsapp-real URL=https://… CELULAR=573…
+	@test -n "$(URL)" -a -n "$(CELULAR)" || { echo "Faltan URL=https://… y CELULAR=573…"; exit 2; }
+	cd pruebas/preproduccion && DIAMANTE_URL="$(URL)" CELULAR="$(CELULAR)" node whatsapp-real.mjs --interactivo
 

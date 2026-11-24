@@ -74,11 +74,13 @@ export default async function (ctx, t) {
 
   // La batería crea clientes con celulares inventados: con WhatsApp de verdad les llegarían
   // mensajes a personas reales. Si Meta está conectado, la corrida se detiene aquí.
-  await t.paso('WhatsApp no sale por Meta (si sale, la batería no sigue)', async () => {
+  // Con DIAMANTE_WHATSAPP_SOLO_A (preproducción), solo los celulares del equipo reciben WhatsApp
+  // de verdad y a los inventados se les simula: ahí sí se puede correr.
+  await t.paso('WhatsApp no sale por Meta a celulares inventados (si sale, la batería no sigue)', async () => {
     const r = await ctx.admin.get('/api/v1/sistema/estado');
     if (r.estado === 404) omitir('la versión desplegada no tiene /sistema/estado');
     const estado = esperar(r, 200);
-    if (estado.cola.proveedor_whatsapp === 'meta') {
+    if (estado.cola.proveedor_whatsapp === 'meta' && !estado.cola.whatsapp_solo_a) {
       ctx.detener = 'WhatsApp está conectado a Meta en este ambiente: la batería escribiría a celulares inventados (de personas reales). No se corre aquí.';
       throw new Error(ctx.detener);
     }

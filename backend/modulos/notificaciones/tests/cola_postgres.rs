@@ -46,6 +46,7 @@ const SIMULADO: ConfiguracionWhatsApp = ConfiguracionWhatsApp {
     simulado: true,
     cloud_api: None,
     webhook: None,
+    solo_a: Vec::new(),
 };
 
 /// El nombre comercial de las plantillas de citas.

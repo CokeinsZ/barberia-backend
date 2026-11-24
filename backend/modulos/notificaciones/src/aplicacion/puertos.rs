@@ -101,8 +101,9 @@ pub(crate) trait PasarelaWhatsApp: Send + Sync + std::fmt::Debug {
     async fn enviar(&self, celular: &str, mensaje: &WhatsAppRenderizado) -> Result<String, ErrorTransporte>;
 
     /// El simulador conserva las variables: sus mensajes nunca salen del sistema y las pruebas
-    /// necesitan leer los códigos.
-    fn conserva_variables(&self) -> bool {
+    /// necesitan leer los códigos. Se decide por destinatario: con `DIAMANTE_WHATSAPP_SOLO_A`,
+    /// unos salen por Meta y otros se simulan.
+    fn conserva_variables(&self, _celular: &str) -> bool {
         false
     }
 }

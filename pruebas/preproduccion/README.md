@@ -22,7 +22,7 @@ node correr.mjs
 - `ESCENARIOS=07,12` corre solo esos (más 00, 02, 03 y 99, de los que dependen).
 - Resultado en pantalla y en `resultados/<corrida>.json` (fuera de git).
 
-**La primera vez**, para activar la cuenta de la administradora creada con
+**La primera vez** (o tras reiniciar la base), para activar la cuenta de la administradora creada con
 `diamante crear-administrador`, agregue `DIAMANTE_CORREO_ADMIN=…` y
 `DIAMANTE_TOKEN_ACTIVACION=…` (el token que va después de `#token=` en el enlace). La batería
 crea una contraseña aleatoria y la guarda en `.credenciales.json` (permisos 600, fuera de git);
@@ -64,13 +64,42 @@ fíjela con `DIAMANTE_APP=<nombre en Dokploy>`. Sin `DIAMANTE_SSH`, esos pasos s
 | 13 | Límites de uso: 429 con `Retry-After` y `X-Forwarded-For` falso (al final: agota el límite público un minuto) |
 | 99 | Limpieza: cancela las citas pendientes de la corrida, retira a sus barberos, desactiva sus servicios y cierra las sesiones |
 
-## Con WhatsApp de verdad, no
+## Con WhatsApp de verdad, solo con lista
 
 La batería crea clientes con **celulares inventados**: con WhatsApp conectado a Meta, los
 mensajes (códigos, confirmaciones, recordatorios) les llegarían a personas reales. Después de
 iniciar sesión revisa `GET /api/v1/sistema/estado` y, si los WhatsApp salen por Meta, **se detiene
-antes de crear nada**. Para probar con Meta, hágalo a mano con su propio celular (runbook,
-sección 2.1).
+antes de crear nada**, salvo que el servidor tenga `DIAMANTE_WHATSAPP_SOLO_A` (runbook, sección
+3): entonces solo los celulares de esa lista reciben WhatsApp de verdad y a los demás se les
+simula. Para probar con Meta, use `whatsapp-real.mjs` con su propio celular (que debe estar en la
+lista).
+
+## WhatsApp de verdad a su celular (`whatsapp-real.mjs`)
+
+Para probar Meta: manda **cada plantilla a un solo celular, el suyo**, y muestra cómo queda cada
+mensaje (`enviado`, `entregado`, `leido` o `fallido` con el motivo de Meta).
+
+```bash
+make whatsapp-real URL=https://back-diamante.mania-agent.online CELULAR=573003579384
+```
+
+- Exige que el servidor envíe por Meta (`proveedor_whatsapp: meta` en `/sistema/estado`).
+- Crea un barbero y un servicio propios (ocultos en la landing) y **siempre** los deja retirado y
+  desactivado, aunque la prueba falle a mitad de camino. Al empezar también recoge los que haya
+  dejado una corrida anterior que se cortó (con Ctrl+C, por ejemplo); para hacer solo eso, sin
+  enviar nada: `DIAMANTE_URL=https://… node whatsapp-real.mjs --solo-limpiar`. El cliente es el de
+  su celular (si ya existía, se usa ese; `NOMBRE=…` para el nombre de uno nuevo).
+- Orden: confirmación, recordatorio (con «Confirmo» y «Cancelar cita»), cambio de hora, aviso para
+  elegir otra hora, cancelación y código de verificación.
+- En una terminal (o con `--interactivo`) le pide tocar **«Confirmo»** y espera a que el webhook de
+  Meta confirme la cita, y le pide **el código** para hacer una reserva en línea con él. Con
+  `--sin-preguntas` solo envía.
+- La reserva en línea necesita una **política de tratamiento de datos vigente** (la misma que exige
+  la reserva real). En una base nueva no la hay: la prueba lo avisa antes de pedir el código y solo
+  envía el código. Publíquela en el panel (o `POST /api/v1/negocio/politicas`) y vuelva a correrla.
+- Usa las credenciales de la batería. Si la base es nueva, cree la administradora y pase el token:
+  `DIAMANTE_CORREO_ADMIN=… DIAMANTE_TOKEN_ACTIVACION=… make whatsapp-real …` (el token es lo que va
+  después de `#token=` en el enlace de `diamante crear-administrador`).
 
 ## Límites de producción (por IP)
 

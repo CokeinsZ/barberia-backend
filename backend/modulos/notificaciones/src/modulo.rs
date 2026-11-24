@@ -16,6 +16,7 @@ use crate::aplicacion::{EnviarCorreosPendientes, EnviarWhatsAppPendientes, Proce
 use crate::infraestructura::postgres::{BuzonPg, RepositorioMensajesPg, RepositorioWebhooksPg, limpiar};
 use crate::infraestructura::smtp::TransporteSmtp;
 use crate::infraestructura::whatsapp_meta::WhatsAppCloudApi;
+use crate::infraestructura::whatsapp_restringido::WhatsAppRestringido;
 use crate::infraestructura::whatsapp_simulado::WhatsAppSimulado;
 
 /// Lo que el módulo necesita de afuera (lo arma `app`).
@@ -40,6 +41,7 @@ pub struct ModuloNotificaciones {
     enviar_correos: Option<Arc<EnviarCorreosPendientes>>,
     enviar_whatsapp: Option<Arc<EnviarWhatsAppPendientes>>,
     proveedor_whatsapp: Option<&'static str>,
+    whatsapp_solo_a: Option<usize>,
     webhooks: Arc<ProcesarWebhooks<UnidadDeTrabajo>>,
     webhook: Option<Arc<plataforma::configuracion::WebhookWhatsApp>>,
 }
@@ -63,12 +65,26 @@ impl ModuloNotificaciones {
             (None, false) => None,
         };
         let pasarela: Option<Arc<dyn PasarelaWhatsApp>> = match &d.whatsapp.cloud_api {
-            Some(cloud) => Some(Arc::new(
-                WhatsAppCloudApi::nuevo(cloud).map_err(ErrorNotificaciones::ConfiguracionWhatsApp)?,
-            )),
+            Some(cloud) => {
+                let meta: Arc<dyn PasarelaWhatsApp> = Arc::new(
+                    WhatsAppCloudApi::nuevo(cloud).map_err(ErrorNotificaciones::ConfiguracionWhatsApp)?,
+                );
+                if d.whatsapp.solo_a.is_empty() {
+                    Some(meta)
+                } else {
+                    tracing::info!(
+                        celulares = d.whatsapp.solo_a.len(),
+                        "WhatsApp por Meta solo a los celulares de DIAMANTE_WHATSAPP_SOLO_A; al resto se simula"
+                    );
+                    Some(Arc::new(WhatsAppRestringido::nuevo(meta, &d.whatsapp.solo_a)))
+                }
+            }
             None if d.whatsapp.simulado => Some(Arc::new(WhatsAppSimulado)),
             None => None,
         };
+        // La lista solo cuenta si se envía por Meta (simulado, ya nada sale).
+        let whatsapp_solo_a = (d.whatsapp.cloud_api.is_some() && !d.whatsapp.solo_a.is_empty())
+            .then_some(d.whatsapp.solo_a.len());
         if d.whatsapp.cloud_api.is_some() && d.whatsapp.webhook.is_none() {
             tracing::warn!(
                 "WhatsApp sale por Meta sin webhook: no llegarán los estados de entrega ni las respuestas a los botones"
@@ -97,6 +113,7 @@ impl ModuloNotificaciones {
             enviar_correos,
             enviar_whatsapp,
             proveedor_whatsapp,
+            whatsapp_solo_a,
             webhooks,
             webhook: d.whatsapp.webhook.clone().map(Arc::new),
         })
@@ -171,6 +188,7 @@ impl ModuloNotificaciones {
             correo: canal("correo", self.envia_correos()),
             whatsapp: canal("whatsapp", self.envia_whatsapp()),
             proveedor_whatsapp: self.proveedor_whatsapp,
+            whatsapp_solo_a: self.whatsapp_solo_a,
             webhooks_pendientes,
             webhooks_atraso_min,
             webhooks_con_error_24h,

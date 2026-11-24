@@ -117,6 +117,10 @@ pub struct ConfiguracionWhatsApp {
     pub cloud_api: Option<CloudApiWhatsApp>,
     /// Webhook de Meta (`/api/v1/webhooks/whatsapp`). Sin él, el webhook rechaza todo.
     pub webhook: Option<WebhookWhatsApp>,
+    /// Celulares (10 dígitos) a los que sí se envía por Meta (`DIAMANTE_WHATSAPP_SOLO_A`). Vacío:
+    /// a todos. Con la lista, a los demás se les simula el envío: así preproducción puede tener
+    /// clientes con celulares inventados (datos de prueba) sin escribirle a nadie de verdad.
+    pub solo_a: Vec<String>,
 }
 
 /// Envío por WhatsApp Cloud API (Meta).
@@ -460,6 +464,27 @@ impl Configuracion {
                 None
             }
         };
+        let mut solo_a = Vec::new();
+        for numero in leer("DIAMANTE_WHATSAPP_SOLO_A")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
+            let digitos: String = numero.chars().filter(char::is_ascii_digit).collect();
+            let celular = match digitos.strip_prefix("57") {
+                Some(resto) if digitos.len() == 12 => resto.to_owned(),
+                _ => digitos,
+            };
+            if celular.len() == 10 && celular.starts_with('3') {
+                solo_a.push(celular);
+            } else {
+                invalidas.push(format!(
+                    "DIAMANTE_WHATSAPP_SOLO_A: «{numero}» (celulares de Colombia separados por coma, 3XXXXXXXXX o 573XXXXXXXXX)"
+                ));
+            }
+        }
+
         let worker_en_api = match leer("DIAMANTE_WORKER_EN_API").as_deref() {
             None | Some("false") => false,
             Some("true") => true,
@@ -514,6 +539,7 @@ impl Configuracion {
                 simulado: entorno != Entorno::Produccion && cloud_api.is_none(),
                 cloud_api,
                 webhook,
+                solo_a,
             },
             worker_en_api,
             gotenberg_url,
@@ -871,6 +897,21 @@ mod pruebas {
         ]))
         .unwrap();
         assert!(!c.whatsapp.simulado && c.whatsapp.cloud_api.is_some());
+        assert!(c.whatsapp.solo_a.is_empty(), "sin la variable, se envía a todos");
+    }
+
+    #[test]
+    fn whatsapp_solo_a_unos_celulares() {
+        let base = [("DATABASE_URL", "postgres://app@db/diamante")];
+        let con = |valor: &'static str| {
+            let mut variables = base.to_vec();
+            variables.push(("DIAMANTE_WHATSAPP_SOLO_A", valor));
+            Configuracion::desde(fuente(&variables))
+        };
+        let c = con(" 573003579384, 310 555 9917 ,,3001112233 ").unwrap();
+        assert_eq!(c.whatsapp.solo_a, ["3003579384", "3105559917", "3001112233"]);
+        let error = con("3003579384,12345,+1 555 0100").unwrap_err();
+        assert_eq!(error.invalidas.len(), 2, "{:?}", error.invalidas);
     }
 
     #[test]

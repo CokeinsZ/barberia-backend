@@ -17,12 +17,12 @@ if (!URL_BASE) {
   process.exit(2);
 }
 
-// Credenciales de la administradora: .credenciales.json (fuera de git). La primera vez se crean
-// activando la cuenta con DIAMANTE_TOKEN_ACTIVACION (el token del enlace de
-// `diamante crear-administrador`) y DIAMANTE_CORREO_ADMIN.
+// Credenciales de la administradora: .credenciales.json (fuera de git). Se crean activando la
+// cuenta con DIAMANTE_TOKEN_ACTIVACION (el token del enlace de `diamante crear-administrador`) y
+// DIAMANTE_CORREO_ADMIN; si se pasa un token, reemplaza las guardadas (p. ej., tras reiniciar la base).
 const rutaCredenciales = aqui('./.credenciales.json');
 let credenciales = existsSync(rutaCredenciales) ? JSON.parse(readFileSync(rutaCredenciales, 'utf8')) : null;
-if (!credenciales && process.env.DIAMANTE_TOKEN_ACTIVACION) {
+if (process.env.DIAMANTE_TOKEN_ACTIVACION) {
   const correo = process.env.DIAMANTE_CORREO_ADMIN;
   if (!correo) {
     console.error('Con DIAMANTE_TOKEN_ACTIVACION defina también DIAMANTE_CORREO_ADMIN');

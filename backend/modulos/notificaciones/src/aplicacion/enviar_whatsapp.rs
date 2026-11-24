@@ -39,7 +39,6 @@ impl EnviarWhatsAppPendientes {
 
     pub(crate) async fn ejecutar(&self) -> Result<ResumenEnvio, ErrorPersistencia> {
         let ahora = self.reloj.ahora();
-        let conservar = self.pasarela.conserva_variables();
         let lote = self
             .mensajes
             .reservar(Canal::WhatsApp, ahora, ahora + RESERVA, TAMANO_LOTE)
@@ -56,6 +55,7 @@ impl EnviarWhatsAppPendientes {
             }
         };
         for mensaje in lote {
+            let conservar = self.pasarela.conserva_variables(&mensaje.destinatario);
             let Ok(plantilla) = serde_json::from_value::<PlantillaWhatsApp>(
                 json!({ "plantilla": mensaje.plantilla, "variables": mensaje.variables }),
             ) else {

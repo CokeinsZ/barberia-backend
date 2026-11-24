@@ -149,6 +149,14 @@ pub(crate) fn evaluar(
             ),
         ));
     }
+    if let Some(celulares) = cola.whatsapp_solo_a {
+        informativos.push(alerta(
+            "whatsapp_solo_a",
+            format!(
+                "WhatsApp sale por Meta solo a {celulares} celular(es) de DIAMANTE_WHATSAPP_SOLO_A; al resto se simula. En producción, quite la variable."
+            ),
+        ));
+    }
     (alertas, informativos)
 }
 
@@ -417,6 +425,16 @@ mod pruebas {
         assert_eq!(
             codigos(&evaluar(&api, &cola, &trabajos)).0,
             ["correo_sin_configurar"]
+        );
+    }
+
+    #[test]
+    fn whatsapp_solo_a_unos_celulares_es_informativo() {
+        let (api, mut cola, trabajos) = sano();
+        cola.whatsapp_solo_a = Some(2);
+        assert_eq!(
+            codigos(&evaluar(&api, &cola, &trabajos)),
+            (vec![], vec!["whatsapp_solo_a"])
         );
     }
 }

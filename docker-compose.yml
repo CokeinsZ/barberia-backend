@@ -35,6 +35,9 @@ x-entorno-app: &entorno-app
   DIAMANTE_WHATSAPP_ID_NUMERO: ${DIAMANTE_WHATSAPP_ID_NUMERO:-}
   DIAMANTE_WHATSAPP_IDIOMA: ${DIAMANTE_WHATSAPP_IDIOMA:-}
   DIAMANTE_WHATSAPP_API: ${DIAMANTE_WHATSAPP_API:-}
+  # Solo preproducción: celulares que sí reciben WhatsApp por Meta (separados por coma); al resto
+  # se les simula. Vacío (producción): a todos.
+  DIAMANTE_WHATSAPP_SOLO_A: ${DIAMANTE_WHATSAPP_SOLO_A:-}
   # Webhook de WhatsApp (secreto de la app de Meta y token de verificación).
   DIAMANTE_WHATSAPP_SECRETO_APP: ${DIAMANTE_WHATSAPP_SECRETO_APP:-}
   DIAMANTE_WHATSAPP_TOKEN_VERIFICACION: ${DIAMANTE_WHATSAPP_TOKEN_VERIFICACION:-}

@@ -226,6 +226,9 @@ pub struct EstadoCola {
     pub whatsapp: EstadoCanal,
     /// `meta` (WhatsApp Cloud API), `simulado` (fuera de producción) o `null` (en cola).
     pub proveedor_whatsapp: Option<&'static str>,
+    /// Con Meta y `DIAMANTE_WHATSAPP_SOLO_A`: a cuántos celulares se envía de verdad (al resto se
+    /// simula). `null`: a todos.
+    pub whatsapp_solo_a: Option<usize>,
     pub webhooks_pendientes: i64,
     /// Minutos desde que llegó el webhook pendiente más antiguo.
     pub webhooks_atraso_min: Option<i64>,

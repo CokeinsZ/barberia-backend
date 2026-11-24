@@ -47,7 +47,7 @@ impl PasarelaWhatsApp for WhatsAppSimulado {
         Ok(format!("wamid.simulado.{aleatorio}"))
     }
 
-    fn conserva_variables(&self) -> bool {
+    fn conserva_variables(&self, _celular: &str) -> bool {
         true
     }
 }

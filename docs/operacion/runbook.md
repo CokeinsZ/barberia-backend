@@ -91,7 +91,35 @@ Las plantillas, su texto y sus variables están en
    132001: …`) queda en el mensaje y la administradora recibe un aviso.
 
 **No corra la batería de preproducción en un ambiente con WhatsApp real**: se niega a correr si lo
-detecta, porque escribiría a celulares inventados.
+detecta, porque escribiría a celulares inventados. La excepción es preproducción con
+`DIAMANTE_WHATSAPP_SOLO_A`: ahí solo los celulares de la lista reciben WhatsApp de verdad y a los
+demás se les simula (quedan `enviado` con un id `wamid.simulado.…`), así que la batería y los datos
+de prueba son seguros. `GET /api/v1/sistema/estado` lo indica con el informativo `whatsapp_solo_a`.
+
+### 2.2 Datos de prueba (solo preproducción)
+
+Para que el equipo del frontend vea pantallas con información real, cargue una barbería en marcha:
+10 servicios y combos, 5 barberos con su horario, unos 170 clientes de todos los segmentos, 12
+semanas de historia (citas en línea y del panel, cobros, inasistencias, cancelaciones, cierres de
+caja), el día de hoy y 3 semanas de citas por venir (con unas vacaciones que dejan citas afectadas
+y un bloqueo).
+
+1. Con WhatsApp por Meta, defina antes `DIAMANTE_WHATSAPP_SOLO_A` (sección 3) y despliegue: los
+   clientes de prueba tienen celulares inventados (`320 999 0001` a `320 999 0170`) y el comando
+   se niega a correr sin la lista.
+2. En el servidor:
+   ```bash
+   docker exec APP-api-1 /app/diamante datos-de-prueba
+   ```
+   Tarda unos minutos e imprime el correo y la contraseña del barbero con acceso al panel
+   (`santiago.rios@example.com`): guárdelos.
+3. Recorre la API real con un reloj propio, así que todo cumple las mismas reglas que el uso
+   normal. Actúa con la administradora `datos-de-prueba@example.com`, que queda desactivada al
+   terminar. No corre dos veces sobre la misma base; para empezar de cero, reinicie la base.
+
+**Nunca en producción.** Y no quite `DIAMANTE_WHATSAPP_SOLO_A` de preproducción mientras haya datos
+de prueba: lo que el equipo haga con esos clientes (cambiar una cita, enviar un recordatorio) les
+escribiría por Meta.
 
 ## 3. Variables de producción
 
@@ -114,6 +142,7 @@ base. **Cada variable con su propio valor** (no reutilice la misma clave).
 | `DIAMANTE_WHATSAPP_ID_NUMERO` | *Phone Number ID* del número de la barbería (WhatsApp Manager → Configuración de la API), solo dígitos | Meta |
 | `DIAMANTE_WHATSAPP_SECRETO_APP` | *App Secret* de la app de Meta (Configuración de la app → Básica): firma de los webhooks | Meta |
 | `DIAMANTE_WHATSAPP_TOKEN_VERIFICACION` | Cadena que usted inventa y pone igual en el campo *Verify token* del webhook en Meta | `openssl rand -hex 24` |
+| `DIAMANTE_WHATSAPP_SOLO_A` | **Solo preproducción.** Celulares del equipo, separados por coma (`3003579384,3105559917`): solo a ellos se les envía por Meta; a los demás (clientes de prueba) se les simula. **En producción, vacía** | El equipo |
 | `DIAMANTE_RESPALDO_REMOTO` | `cifrado:` | Sección 5 |
 | `DIAMANTE_RESPALDO_RCLONE_CONF_B64` | Configuración de rclone en base64 | Sección 5 |
 

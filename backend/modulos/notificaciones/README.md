@@ -30,7 +30,7 @@ o simulado fuera de producción), webhooks firmados y avisos internos para la ad
 | Canal | Sin configuración | Con configuración |
 |---|---|---|
 | Correo | En cola, sin enviarse | SMTP (`DIAMANTE_SMTP_*`); Mailpit en desarrollo y E2E |
-| WhatsApp | Fuera de producción: **simulado**. En producción: en cola | WhatsApp Cloud API con `DIAMANTE_WHATSAPP_TOKEN` y `DIAMANTE_WHATSAPP_ID_NUMERO` (idioma `DIAMANTE_WHATSAPP_IDIOMA`, `es_CO`; versión `DIAMANTE_WHATSAPP_API`, v26.0) |
+| WhatsApp | Fuera de producción: **simulado**. En producción: en cola | WhatsApp Cloud API con `DIAMANTE_WHATSAPP_TOKEN` y `DIAMANTE_WHATSAPP_ID_NUMERO` (idioma `DIAMANTE_WHATSAPP_IDIOMA`, `es_CO`; versión `DIAMANTE_WHATSAPP_API`, v26.0). En preproducción, con `DIAMANTE_WHATSAPP_SOLO_A`, solo a esos celulares; al resto se simula (`infraestructura/whatsapp_restringido.rs`) |
 
 **WhatsApp Cloud API** (`infraestructura/whatsapp_meta.rs`): `POST {api}/{id_numero}/messages`
 con el token como `Bearer`, la plantilla por nombre e idioma, los parámetros del cuerpo en orden,

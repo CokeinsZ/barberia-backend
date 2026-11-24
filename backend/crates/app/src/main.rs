@@ -13,6 +13,7 @@
 mod adaptadores;
 mod administracion;
 mod composicion;
+mod datos_de_prueba;
 mod enrutador;
 mod migraciones;
 mod pruebas_e2e;
@@ -26,6 +27,8 @@ mod worker;
 mod pruebas_autorizacion;
 #[cfg(test)]
 mod pruebas_concurrencia;
+#[cfg(test)]
+mod pruebas_documentacion;
 #[cfg(test)]
 mod pruebas_entrega2;
 #[cfg(test)]
@@ -91,6 +94,7 @@ async fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         },
+        "datos-de-prueba" => datos_de_prueba::cargar(&configuracion).await,
         "crear-administrador" => match &argumentos[1..] {
             [correo, nombre @ ..] if !nombre.is_empty() => {
                 administracion::crear_administrador(&configuracion, correo, &nombre.join(" ")).await
@@ -101,7 +105,9 @@ async fn main() -> ExitCode {
             }
         },
         _ => {
-            eprintln!("Uso: diamante <api|worker|migrar|salud|crear-administrador|enlace-acceso>");
+            eprintln!(
+                "Uso: diamante <api|worker|migrar|salud|crear-administrador|enlace-acceso|datos-de-prueba>"
+            );
             return ExitCode::from(2);
         }
     };

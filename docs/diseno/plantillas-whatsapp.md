@@ -15,6 +15,9 @@ si no coinciden, Meta rechaza el mensaje con el error 132000).
 - Con `DIAMANTE_WHATSAPP_TOKEN` y `DIAMANTE_WHATSAPP_ID_NUMERO` configurados, el worker envía por
   **WhatsApp Cloud API** (`POST https://graph.facebook.com/v26.0/{id_numero}/messages`). Idioma:
   `DIAMANTE_WHATSAPP_IDIOMA` (por defecto `es_CO`); versión de la API: `DIAMANTE_WHATSAPP_API`.
+- **Preproducción:** con `DIAMANTE_WHATSAPP_SOLO_A` (celulares separados por coma), solo a esos
+  se les envía por Meta; a los demás se les simula, como sin credenciales. Así preproducción
+  puede tener clientes de prueba con celulares inventados. En producción va vacía.
 - Sin esas credenciales, fuera de producción se **simula** (el worker marca el mensaje como
   enviado y escribe el texto en el log; las pruebas lo leen con `GET /api/v1/_pruebas/mensajes`)
   y en producción los mensajes **esperan en la cola** hasta configurarlas.
